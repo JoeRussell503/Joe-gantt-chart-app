@@ -1,0 +1,7 @@
+{
+  "name": "Gemini-Powered Smart Gantt",
+  "description": "A high-performance Smartsheet-like Gantt chart with automated scheduling, dependency tracking, and AI-powered task decomposition.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -1,0 +1,138 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Gantt Pro</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { margin: 0; padding: 0; overflow: hidden; height: 100vh; background-color: #f9fafb; }
+    #root { height: 100%; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .gantt-grid {
+      background-size: 40px 100%, 100% 40px;
+      background-image: 
+        linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+        linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
+    }
+    
+    @keyframes bar-focus {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+      50% { transform: scale(1.02); box-shadow: 0 0 15px 2px rgba(59, 130, 246, 0.4); }
+      100% { transform: scale(1.02); box-shadow: 0 0 12px 0px rgba(59, 130, 246, 0.3); }
+    }
+
+    @keyframes flow {
+      from { stroke-dashoffset: 20; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    @keyframes conflict-pulse {
+      0% { stroke-opacity: 0.8; filter: drop-shadow(0 0 1px rgba(239, 68, 68, 0.4)); }
+      50% { stroke-opacity: 1; filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.7)); }
+      100% { stroke-opacity: 0.8; filter: drop-shadow(0 0 1px rgba(239, 68, 68, 0.4)); }
+    }
+
+    @keyframes overdue-glow {
+      0% { box-shadow: 0 0 0px rgba(245, 158, 11, 0); border-color: rgba(245, 158, 11, 0.5); }
+      50% { box-shadow: 0 0 10px rgba(245, 158, 11, 0.4); border-color: rgba(245, 158, 11, 1); }
+      100% { box-shadow: 0 0 0px rgba(245, 158, 11, 0); border-color: rgba(245, 158, 11, 0.5); }
+    }
+
+    .task-bar-selected {
+      animation: bar-focus 0.3s ease-out forwards;
+      z-index: 40 !important;
+    }
+
+    .task-bar-overdue {
+      animation: overdue-glow 2s infinite ease-in-out;
+    }
+
+    .row-highlight-active {
+      background: linear-gradient(90deg, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0.02) 100%);
+    }
+
+    .dependency-line-base {
+      transition: all 0.3s ease;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .dependency-line-selected {
+      stroke: #2563eb !important;
+      stroke-width: 2.5 !important;
+      stroke-dasharray: 8, 4;
+      animation: flow 1s linear infinite;
+      filter: drop-shadow(0 0 4px rgba(37, 99, 235, 0.5));
+    }
+
+    .dependency-line-conflict {
+      stroke: #ef4444 !important;
+      stroke-width: 2 !important;
+      animation: conflict-pulse 2s ease-in-out infinite;
+    }
+
+    .dependency-line-idle {
+      stroke-opacity: 0.4;
+      stroke-width: 1.2;
+    }
+
+    .dependency-line-idle:hover {
+      stroke-opacity: 0.9;
+      stroke-width: 2;
+      stroke: #64748b !important;
+    }
+
+    /* Print Styles */
+    @media print {
+      nav, header, footer, .sidebar-container, button, .ai-input-container {
+        display: none !important;
+      }
+      body, #root {
+        overflow: visible !important;
+        height: auto !important;
+        background-color: white !important;
+      }
+      .flex-1 {
+        overflow: visible !important;
+        display: block !important;
+      }
+      .gantt-container {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+      }
+      .task-list-container {
+        width: 100% !important;
+        border: 1px solid #eee !important;
+      }
+      .gantt-chart-container {
+        width: 100% !important;
+        margin-top: 20px !important;
+        page-break-before: always;
+      }
+      .no-scrollbar {
+        overflow: visible !important;
+      }
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+  <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
