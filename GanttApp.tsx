@@ -3,6 +3,7 @@ import { Task, Project } from './types';
 import { addDays, getDiffDays, getTimelineRange, isWeekend, isWorkDay, parseUTCDate, toUTCDateString } from './utils/dateUtils';
 import { generateTasksFromPrompt, parseFileWithGemini } from './services/geminiService';
 import Sidebar from './components/Sidebar';
+import ShareModal from './components/ShareModal';
 import CalendarView from './components/CalendarView';
 
 interface DragInfo {
@@ -58,6 +59,7 @@ const App: React.FC = () => {
   const [now, setNow] = useState(new Date());
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [viewType, setViewType] = useState<'gantt' | 'calendar'>('gantt');
   
   const [idOfProjectToDelete, setIdOfProjectToDelete] = useState<string | null>(null);
@@ -958,6 +960,14 @@ const App: React.FC = () => {
               </button>
             </div>
             
+
+           <button
+           onClick={() => setIsShareModalOpen(true)}
+           className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-black tracking-widest hover:bg-blue-700 transition-all flex items-center gap-2 shadow-md"
+>
+<i className=fa-solid fa-share-nodes"></i> SHARE
+</button>
+
             <div className="relative" ref={exportDropdownRef}>
               <button 
                 onClick={() => setIsExportOpen(!isExportOpen)}
@@ -1173,6 +1183,17 @@ const App: React.FC = () => {
             <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-amber-400 ring-1 ring-amber-500 shadow-sm"></div> OVERDUE</span>
             <span className="flex items-center gap-1.5 ml-2"><div className="w-4 h-2.5 rounded-sm bg-slate-900 shadow-sm"></div> SUMMARY</span>
           </div>
+
+{activeProject && (
+<ShareModal
+isOpen={isShareModalOpen}
+onClose={() => setIsShareModalOpen(false)}
+projectId={activeProject.id}
+projectName={activeProject.name}
+members={activeProject.members ||[]}
+isOwner={true}
+/>
+)}
         </footer>
         <div className="sidebar-container">
           <Sidebar 
