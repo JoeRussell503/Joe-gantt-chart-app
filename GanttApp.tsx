@@ -942,10 +942,10 @@ const App: React.FC = () => {
               >
                 <i className="fa-solid fa-trash-can"></i>
               </button>
-<button onClick={outdentTask} disabled={!selectedTaskId} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Outdent">
+<button onClick={outdentTask} disabled={!selectedTaskIds} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Outdent">
                 <i className="fa-solid fa-outdent"></i>
               </button>
-              <button onClick={indentTask} disabled={!selectedTaskId} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Indent">
+              <button onClick={indentTask} disabled={!selectedTaskIds} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Indent">
                 <i className="fa-solid fa-indent"></i>
               </button>
             </div>
