@@ -1183,6 +1183,7 @@ const App: React.FC = () => {
             )}
             <div className="w-[1px] h-3 bg-gray-200"></div>
             <span className="flex items-center gap-1.5"><i className="fa-solid fa-business-time"></i> WORK DAYS: M-F</span>
+{lastSaved && <span className="text-gray-500 ml-4">Last saved: {lastSaved.toLocaleTimeString()}</span>}
           </div>
           <div className="flex gap-4">
             <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-blue-500 shadow-sm"></div> PLANNED</span>
