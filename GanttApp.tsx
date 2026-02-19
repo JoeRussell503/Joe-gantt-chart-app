@@ -1,9 +1,9 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Task, Project } from './types';
 import { addDays, getDiffDays, getTimelineRange, isWeekend, isWorkDay, parseUTCDate, toUTCDateString } from './utils/dateUtils';
 import { generateTasksFromPrompt, parseFileWithGemini } from './services/geminiService';
 import Sidebar from './components/Sidebar';
+import CalendarView from './components/CalendarView';
 
 interface DragInfo {
   taskId: string;
@@ -48,7 +48,8 @@ const App: React.FC = () => {
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [clipboard, setClipboard] = useState<Task[]>([]);
   const [isShowingProjectSettings, setIsShowingProjectSettings] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [promptValue, setPromptValue] = useState('');
@@ -57,12 +58,20 @@ const App: React.FC = () => {
   const [now, setNow] = useState(new Date());
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [viewType, setViewType] = useState<'gantt' | 'calendar'>('gantt');
   
   const [idOfProjectToDelete, setIdOfProjectToDelete] = useState<string | null>(null);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [showUploadStep, setShowUploadStep] = useState(false);
   const [isParsingFile, setIsParsingFile] = useState(false);
   const [draggedRowIndex, setDraggedRowIndex] = useState<number | null>(null);
+
+  // Fix: Move declarations of activeProject and tasks before the useEffect that references them
+  const activeProject = useMemo(() => 
+    projects.find(p => p.id === activeProjectId) || projects[0], 
+  [projects, activeProjectId]);
+
+  const tasks = activeProject?.tasks || [];
 
   useEffect(() => {
     if (projects.length > 0) {
@@ -89,11 +98,26 @@ const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  const activeProject = useMemo(() => 
-    projects.find(p => p.id === activeProjectId) || projects[0], 
-  [projects, activeProjectId]);
+  // Keyboard Shortcuts Handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-  const tasks = activeProject?.tasks || [];
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+
+      if (cmdKey && e.key.toLowerCase() === 'c') {
+        handleCopy();
+      } else if (cmdKey && e.key.toLowerCase() === 'v') {
+        handlePaste();
+      } else if (e.key === 'Delete' || (cmdKey && e.key === 'Backspace')) {
+        deleteSelected();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedTaskIds, clipboard, tasks]);
 
   const handleCreateProject = (prePopulatedTasks: Task[] = []) => {
     const newId = Math.random().toString(36).substr(2, 9);
@@ -105,7 +129,7 @@ const App: React.FC = () => {
     };
     setProjects([...projects, newProject]);
     setActiveProjectId(newId);
-    setSelectedTaskId(null);
+    setSelectedTaskIds([]);
     setIsShowingProjectSettings(false);
     setIsNewProjectModalOpen(false);
     setShowUploadStep(false);
@@ -181,7 +205,7 @@ const App: React.FC = () => {
       setActiveProjectId(filtered[0].id);
     }
     
-    setSelectedTaskId(null);
+    setSelectedTaskIds([]);
     setIsShowingProjectSettings(false);
     setIdOfProjectToDelete(null);
   };
@@ -282,7 +306,7 @@ const App: React.FC = () => {
 
   const handleBarMouseDown = (e: React.MouseEvent, task: Task, type: 'move' | 'resize') => {
     e.stopPropagation();
-    setSelectedTaskId(task.id);
+    setSelectedTaskIds([task.id]);
     setIsShowingProjectSettings(false);
     setDragInfo({
       taskId: task.id,
@@ -353,21 +377,74 @@ const App: React.FC = () => {
     };
   }, [dragInfo, zoomLevel, activeProjectId]);
 
-  const indentTask = () => {
-    if (!selectedTaskId) return;
-    const idx = tasks.findIndex(t => t.id === selectedTaskId);
-    if (idx <= 0) return;
-    if (tasks[idx].level <= tasks[idx - 1].level) {
-      handleUpdateTask(selectedTaskId, { level: tasks[idx].level + 1 });
+  const handleCopy = () => {
+    if (selectedTaskIds.length === 0) return;
+    const toCopy = tasks.filter(t => selectedTaskIds.includes(t.id));
+    setClipboard(JSON.parse(JSON.stringify(toCopy))); // Deep clone
+  };
+
+  const handlePaste = () => {
+    if (clipboard.length === 0) return;
+    
+    const newTasks: Task[] = clipboard.map(t => ({
+      ...t,
+      id: Math.random().toString(36).substr(2, 9),
+      dependencies: [], // Dependencies usually reset on paste to avoid loops
+      progress: 0,
+      status: 'Not Started'
+    }));
+
+    setProjects(prev => prev.map(p => {
+      if (p.id !== activeProjectId) return p;
+      return { ...p, tasks: [...p.tasks, ...newTasks] };
+    }));
+    
+    setSelectedTaskIds(newTasks.map(t => t.id));
+  };
+
+  const handleSelectTask = (e: React.MouseEvent, taskId: string, index: number) => {
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const multiKey = isMac ? e.metaKey : e.ctrlKey;
+    const shiftKey = e.shiftKey;
+
+    if (shiftKey && selectedTaskIds.length > 0) {
+      const lastSelectedId = selectedTaskIds[selectedTaskIds.length - 1];
+      const lastIdx = tasks.findIndex(t => t.id === lastSelectedId);
+      const start = Math.min(lastIdx, index);
+      const end = Math.max(lastIdx, index);
+      const rangeIds = tasks.slice(start, end + 1).map(t => t.id);
+      setSelectedTaskIds(Array.from(new Set([...selectedTaskIds, ...rangeIds])));
+    } else if (multiKey) {
+      if (selectedTaskIds.includes(taskId)) {
+        setSelectedTaskIds(selectedTaskIds.filter(id => id !== taskId));
+      } else {
+        setSelectedTaskIds([...selectedTaskIds, taskId]);
+      }
+    } else {
+      setSelectedTaskIds([taskId]);
     }
+    setIsShowingProjectSettings(false);
+  };
+
+  const indentTask = () => {
+    if (selectedTaskIds.length === 0) return;
+    selectedTaskIds.forEach(id => {
+      const idx = tasks.findIndex(t => t.id === id);
+      if (idx <= 0) return;
+      if (tasks[idx].level <= tasks[idx - 1].level) {
+        handleUpdateTask(id, { level: tasks[idx].level + 1 });
+      }
+    });
   };
 
   const outdentTask = () => {
-    if (!selectedTaskId) return;
-    const idx = tasks.findIndex(t => t.id === selectedTaskId);
-    if (idx !== -1 && tasks[idx].level > 0) {
-      handleUpdateTask(selectedTaskId, { level: tasks[idx].level - 1 });
-    }
+    if (selectedTaskIds.length === 0) return;
+    selectedTaskIds.forEach(id => {
+      const idx = tasks.findIndex(t => t.id === id);
+      if (idx !== -1 && tasks[idx].level > 0) {
+        handleUpdateTask(id, { level: tasks[idx].level - 1 });
+      }
+    });
   };
 
   const addTask = () => {
@@ -389,21 +466,23 @@ const App: React.FC = () => {
       level: lastTask ? lastTask.level : 0
     };
     setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, tasks: [...p.tasks, newTask] } : p));
-    setSelectedTaskId(newId);
+    setSelectedTaskIds([newId]);
     setIsShowingProjectSettings(false);
   };
 
   const deleteSelected = () => {
-    if (selectedTaskId) {
-      setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, tasks: p.tasks.filter(t => t.id !== selectedTaskId) } : p));
-      setSelectedTaskId(null);
+    if (selectedTaskIds.length > 0) {
+      setProjects(prev => prev.map(p => p.id === activeProjectId ? { 
+        ...p, 
+        tasks: p.tasks.filter(t => !selectedTaskIds.includes(t.id)) 
+      } : p));
+      setSelectedTaskIds([]);
     }
   };
 
   const handleTaskDragStart = (e: React.DragEvent, originalIndex: number) => {
     setDraggedRowIndex(originalIndex);
     e.dataTransfer.effectAllowed = 'move';
-    // Transparent ghost image
     const img = new Image();
     img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
     e.dataTransfer.setDragImage(img, 0, 0);
@@ -515,7 +594,10 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  const selectedTask = processedTasks.find(t => t.id === selectedTaskId) || null;
+  const selectedTask = useMemo(() => {
+    if (selectedTaskIds.length === 0) return null;
+    return tasks.find(t => t.id === selectedTaskIds[selectedTaskIds.length - 1]) || null;
+  }, [selectedTaskIds, tasks]);
 
   const conflictedTaskIds = useMemo(() => {
     const conflicts = new Set<string>();
@@ -595,8 +677,8 @@ const App: React.FC = () => {
           const toY = targetIdx * 40 + 20 + 48;
           
           const isConflict = task.startDate < sourceTask.endDate;
-          const isSelectedDep = selectedTaskId === task.id || selectedTaskId === depId;
-          const isAnySelected = selectedTaskId !== null;
+          const isSelectedDep = selectedTaskIds.includes(task.id) || selectedTaskIds.includes(depId);
+          const isAnySelected = selectedTaskIds.length > 0;
           
           const midX = fromX + (toX - fromX) / 2;
           const cp1X = fromX + Math.min(20, (toX - fromX) / 4);
@@ -623,7 +705,7 @@ const App: React.FC = () => {
       });
     });
     return lines;
-  }, [visibleTasks, timelineRange, zoomLevel, selectedTaskId]);
+  }, [visibleTasks, timelineRange, zoomLevel, selectedTaskIds]);
 
   return (
     <div className="flex h-screen bg-white text-gray-900 font-sans select-none overflow-hidden">
@@ -744,7 +826,7 @@ const App: React.FC = () => {
           {projects.map(p => (
             <div key={p.id} className="relative group px-2 w-full flex justify-center">
               <button
-                onClick={() => { setActiveProjectId(p.id); setSelectedTaskId(null); setIsShowingProjectSettings(false); }}
+                onClick={() => { setActiveProjectId(p.id); setSelectedTaskIds([]); setIsShowingProjectSettings(false); }}
                 className={`w-11 h-11 rounded-xl flex items-center justify-center text-xs font-bold transition-all duration-300 ${
                   activeProjectId === p.id 
                     ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.6)] ring-2 ring-blue-500 ring-offset-4 ring-offset-slate-950 scale-105' 
@@ -780,7 +862,7 @@ const App: React.FC = () => {
         </div>
         <div className="mt-auto pt-6 border-t border-slate-900 flex flex-col gap-5 items-center w-full">
            <button 
-            onClick={() => { setIsShowingProjectSettings(true); setSelectedTaskId(null); }}
+            onClick={() => { setIsShowingProjectSettings(true); setSelectedTaskIds([]); }}
             className={`transition-colors p-2 rounded-lg ${isShowingProjectSettings ? 'bg-blue-600/20 text-blue-500' : 'text-slate-600 hover:text-white'}`} 
             title="Settings"
            >
@@ -796,7 +878,7 @@ const App: React.FC = () => {
         <header className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0 shadow-sm z-40">
           <div className="flex items-center gap-6 flex-1">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-600/20" onClick={() => { setSelectedTaskId(null); setIsShowingProjectSettings(false); }}>
+              <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-600/20" onClick={() => { setSelectedTaskIds([]); setIsShowingProjectSettings(false); }}>
                 <i className="fa-solid fa-calendar-week cursor-pointer"></i>
               </div>
               <div className="flex items-center gap-2 group">
@@ -808,53 +890,71 @@ const App: React.FC = () => {
                   onChange={(e) => handleUpdateProjectName(e.target.value)}
                   placeholder="Project Name"
                 />
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                   <button 
-                    onClick={handleDuplicateProject}
-                    className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-blue-600 transition-colors"
-                    title="Duplicate Project"
-                   >
-                     <i className="fa-solid fa-copy text-xs"></i>
-                   </button>
-                   <button 
-                    onClick={() => setIdOfProjectToDelete(activeProjectId)}
-                    className="p-1.5 hover:bg-red-50 rounded text-gray-400 hover:text-red-600 transition-colors"
-                    title="Delete Project"
-                   >
-                     <i className="fa-solid fa-trash-can text-xs"></i>
-                   </button>
-                </div>
               </div>
             </div>
             <div className="h-6 w-[1px] bg-gray-200"></div>
+            
+            <div className="flex items-center bg-gray-100 p-1 rounded-xl shadow-inner">
+              <button 
+                onClick={() => setViewType('gantt')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-black tracking-widest transition-all flex items-center gap-2 ${viewType === 'gantt' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                <i className="fa-solid fa-chart-gantt"></i> GANTT
+              </button>
+              <button 
+                onClick={() => setViewType('calendar')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-black tracking-widest transition-all flex items-center gap-2 ${viewType === 'calendar' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                <i className="fa-solid fa-calendar-days"></i> CALENDAR
+              </button>
+            </div>
+
+            <div className="h-4 w-[1px] bg-gray-200 mx-1"></div>
             <div className="flex items-center gap-1">
-              <button onClick={addTask} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all shadow-md active:scale-95 flex items-center gap-2">
+              <button onClick={addTask} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all shadow-md active:scale-95 flex items-center gap-2" title="New Task">
                 <i className="fa-solid fa-plus"></i> New Task
               </button>
-              <div className="h-4 w-[1px] bg-gray-200 mx-3"></div>
-              <button onClick={deleteSelected} disabled={!selectedTaskId} className="p-2 hover:bg-red-50 hover:text-red-600 rounded text-gray-400 disabled:opacity-30 transition-colors" title="Delete Selected Task">
+              <div className="flex items-center gap-1 ml-2">
+                <button 
+                  onClick={handleCopy} 
+                  disabled={selectedTaskIds.length === 0}
+                  className="p-2 hover:bg-slate-100 rounded text-slate-500 disabled:opacity-30 transition-colors" 
+                  title="Copy Selection (Ctrl+C)"
+                >
+                  <i className="fa-solid fa-copy"></i>
+                </button>
+                <button 
+                  onClick={handlePaste} 
+                  disabled={clipboard.length === 0}
+                  className="p-2 hover:bg-slate-100 rounded text-slate-500 disabled:opacity-30 transition-colors" 
+                  title="Paste (Ctrl+V)"
+                >
+                  <i className="fa-solid fa-paste"></i>
+                </button>
+              </div>
+              <button 
+                onClick={deleteSelected} 
+                disabled={selectedTaskIds.length === 0} 
+                className="p-2 hover:bg-red-50 hover:text-red-600 rounded text-gray-400 disabled:opacity-30 transition-colors" 
+                title="Delete Selected Tasks (Del)"
+              >
                 <i className="fa-solid fa-trash-can"></i>
-              </button>
-              <button onClick={outdentTask} disabled={!selectedTaskId} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Outdent">
-                <i className="fa-solid fa-outdent"></i>
-              </button>
-              <button onClick={indentTask} disabled={!selectedTaskId} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Indent">
-                <i className="fa-solid fa-indent"></i>
               </button>
             </div>
           </div>
+          
           <div className="flex items-center gap-6">
-            <div className="relative w-80 ai-input-container">
+            <div className="relative w-64 ai-input-container">
               <input 
                 type="text" 
-                placeholder="Ask AI to build your timeline..." 
-                className="w-full bg-gray-100 border-none rounded-xl py-2 pl-4 pr-10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all shadow-inner" 
+                placeholder="Ask AI to refine..." 
+                className="w-full bg-gray-100 border-none rounded-xl py-2 pl-4 pr-10 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all shadow-inner" 
                 value={promptValue} 
                 onChange={e => setPromptValue(e.target.value)} 
                 onKeyDown={e => e.key === 'Enter' && handleAiGeneration()} 
               />
               <button onClick={handleAiGeneration} disabled={isGenerating} className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-600 hover:text-blue-800 disabled:opacity-50">
-                {isGenerating ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-wand-magic-sparkles"></i>}
+                {isGenerating ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-wand-magic-sparkles text-xs"></i>}
               </button>
             </div>
             
@@ -873,177 +973,185 @@ const App: React.FC = () => {
                   <button onClick={() => exportData('csv')} className="w-full text-left px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-lg flex items-center gap-3 transition-colors">
                     <i className="fa-solid fa-file-csv text-blue-500"></i> CSV Spreadsheet
                   </button>
-                  <button onClick={() => exportData('excel')} className="w-full text-left px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-lg flex items-center gap-3 transition-colors">
-                    <i className="fa-solid fa-file-excel text-emerald-600"></i> Microsoft Excel
-                  </button>
-                  <button onClick={() => exportData('google-sheets')} className="w-full text-left px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-lg flex items-center gap-3 transition-colors">
-                    <i className="fa-solid fa-table text-green-600"></i> Google Sheets
-                  </button>
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-2 text-gray-500 bg-gray-100 rounded-xl p-1 shadow-inner">
-              <button onClick={() => setZoomLevel(Math.max(20, zoomLevel - 10))} className="w-8 h-8 hover:bg-white hover:shadow-sm rounded-lg flex items-center justify-center transition-all"><i className="fa-solid fa-minus text-xs"></i></button>
-              <span className="text-[10px] font-black w-10 text-center tracking-tighter">{Math.round((zoomLevel / 40) * 100)}%</span>
-              <button onClick={() => setZoomLevel(Math.min(100, zoomLevel + 10))} className="w-8 h-8 hover:bg-white hover:shadow-sm rounded-lg flex items-center justify-center transition-all"><i className="fa-solid fa-plus text-xs"></i></button>
-            </div>
+            {viewType === 'gantt' && (
+              <div className="flex items-center gap-2 text-gray-500 bg-gray-100 rounded-xl p-1 shadow-inner">
+                <button onClick={() => setZoomLevel(Math.max(20, zoomLevel - 10))} className="w-8 h-8 hover:bg-white hover:shadow-sm rounded-lg flex items-center justify-center transition-all"><i className="fa-solid fa-minus text-[10px]"></i></button>
+                <span className="text-[9px] font-black w-10 text-center tracking-tighter">{Math.round((zoomLevel / 40) * 100)}%</span>
+                <button onClick={() => setZoomLevel(Math.min(100, zoomLevel + 10))} className="w-8 h-8 hover:bg-white hover:shadow-sm rounded-lg flex items-center justify-center transition-all"><i className="fa-solid fa-plus text-[10px]"></i></button>
+              </div>
+            )}
           </div>
         </header>
 
         <div className="flex-1 flex overflow-hidden gantt-container">
-          <div className="w-[640px] border-r border-gray-200 flex flex-col bg-white task-list-container">
-            <div className="h-12 sticky top-0 border-b border-gray-200 bg-gray-50/50 flex items-center px-4 font-black text-[10px] text-gray-500 uppercase tracking-[0.15em] z-40">
-              <div className="w-8 text-center pr-2">ID</div>
-              <div className="flex-1 px-4 border-l border-gray-100">Task Details</div>
-              <div className="w-20 text-center border-l border-gray-100">Duration</div>
-              <div className="w-28 text-center border-l border-gray-100">Assignee</div>
-              <div className="w-10 text-center border-l border-gray-100">Done</div>
-              <div className="w-10"></div>
-            </div>
-            <div ref={tableRef} className="flex-1 overflow-y-auto no-scrollbar" onScroll={handleScroll}>
-              {visibleTasks.map(({ task, originalIndex }, visibleIdx) => {
-                const hasChildren = isParent(originalIndex);
-                const hasConflict = conflictedTaskIds.has(task.id);
-                const isOverdue = overdueTaskIds.has(task.id);
-                const isSelected = selectedTaskId === task.id;
-                const isBeingDragged = draggedRowIndex === originalIndex;
-                
-                return (
-                  <div 
-                    key={task.id} 
-                    draggable={true}
-                    onDragStart={(e) => handleTaskDragStart(e, originalIndex)}
-                    onDragOver={(e) => handleTaskDragOver(e, originalIndex)}
-                    onDragEnd={handleTaskDragEnd}
-                    onClick={() => { setSelectedTaskId(task.id); setIsShowingProjectSettings(false); }} 
-                    className={`group h-10 border-b border-gray-50 flex items-center cursor-pointer transition-all duration-200 ${
-                      isSelected ? 'bg-blue-50/70 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]' : 'hover:bg-gray-50/50'
-                    } ${hasConflict ? 'bg-red-50/30' : ''} ${isOverdue ? 'bg-amber-50/30' : ''} ${isBeingDragged ? 'opacity-40 grayscale' : ''}`}
-                  >
-                    <div className="w-5 flex items-center justify-center text-gray-300 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity pl-1">
-                      <i className="fa-solid fa-grip-vertical text-[10px]"></i>
-                    </div>
-                    <div className={`w-1 h-full transition-all duration-300 ${isSelected ? 'bg-blue-600 scale-y-100' : 'bg-transparent scale-y-0'}`}></div>
-                    <div className="w-7 text-[10px] text-gray-400 font-black text-center pr-2">{originalIndex + 1}</div>
-                    <div className="flex-1 px-2 overflow-hidden flex items-center" style={{ paddingLeft: `${task.level * 24 + 4}px` }}>
-                      {hasChildren && <button onClick={(e) => { e.stopPropagation(); handleUpdateTask(task.id, { isCollapsed: !task.isCollapsed }); }} className="mr-2 text-gray-400 hover:text-gray-600 transition-transform duration-200" style={{ transform: task.isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}><i className="fa-solid fa-chevron-down text-[10px]"></i></button>}
-                      {!hasChildren && <div className="w-4 mr-2"></div>}
-                      <div className="flex-1 flex items-center gap-2 overflow-hidden">
-                         <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: task.color || (hasChildren ? '#0f172a' : '#3b82f6') }}></div>
-                         <input type="text" value={task.name} readOnly={hasChildren} onChange={(e) => handleUpdateTask(task.id, { name: e.target.value })} className={`w-full bg-transparent border-none text-[13px] font-medium focus:ring-0 truncate ${hasChildren ? 'font-bold cursor-default' : ''} ${isSelected ? 'text-blue-900' : 'text-slate-800'}`} />
-                         <div className="flex items-center gap-1.5 shrink-0 ml-auto mr-2">
-                           {isOverdue && !hasChildren && <span className="bg-amber-100 text-amber-700 text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded flex items-center gap-1"><i className="fa-solid fa-clock-rotate-left"></i> LATE</span>}
-                           {hasConflict && !hasChildren && <i className="fa-solid fa-triangle-exclamation text-[10px] text-red-500 flex-shrink-0 animate-pulse" title="Dependency Conflict"></i>}
-                         </div>
-                      </div>
-                    </div>
-                    <div className="w-20 text-center">
-                      <input type="number" step="1" value={task.duration} readOnly={hasChildren} onChange={(e) => handleUpdateTask(task.id, { duration: parseInt(e.target.value) || 0 })} className={`w-10 text-center bg-transparent border-none text-[12px] font-bold focus:ring-0 ${hasChildren ? 'text-slate-900' : 'text-slate-600'}`} />
-                      <span className="text-[10px] font-bold text-gray-300">d</span>
-                    </div>
-                    <div className="w-28 text-center px-2">
-                      <input type="text" placeholder="Unassigned" value={task.assignee || ''} onChange={(e) => handleUpdateTask(task.id, { assignee: e.target.value })} className="w-full bg-transparent border-none text-[11px] font-medium text-gray-600 focus:ring-0 text-center italic placeholder:text-gray-300" />
-                    </div>
-                    <div className="w-10 flex items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={task.progress === 100}
-                        onChange={(e) => handleUpdateTask(task.id, { progress: e.target.checked ? 100 : 0 })}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
-                        disabled={hasChildren}
-                      />
-                    </div>
-                    <div className="w-10 flex items-center justify-center">
-                      {task.attachments.length > 0 && <i className="fa-solid fa-paperclip text-[10px] text-blue-500 bg-blue-50 p-1 rounded-md"></i>}
-                    </div>
-                  </div>
-                );
-              })}
-              <div className="h-40"></div>
-            </div>
-          </div>
-
-          <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 relative gantt-chart-container">
-            <div ref={gridRef} className="flex-1 overflow-auto bg-white" onScroll={handleScroll}>
-              <div className="relative gantt-grid" style={{ width: totalDays * zoomLevel, height: visibleTasks.length * 40 + 200, backgroundImage: `linear-gradient(to right, #f3f4f6 1px, transparent 1px), linear-gradient(to bottom, #f3f4f6 1px, transparent 1px)`, backgroundSize: `${zoomLevel}px 40px` }}>
-                <div className="sticky top-0 z-30 bg-white border-b border-gray-200 flex flex-col shadow-sm" style={{ width: totalDays * zoomLevel }}>
-                  <div className="flex h-6">{monthHeaders}</div>
-                  <div className="flex h-6">{dateHeaders}</div>
+          {viewType === 'gantt' ? (
+            <>
+              <div className="w-[640px] border-r border-gray-200 flex flex-col bg-white task-list-container">
+                <div className="h-12 sticky top-0 border-b border-gray-200 bg-gray-50/50 flex items-center px-4 font-black text-[10px] text-gray-500 uppercase tracking-[0.15em] z-40">
+                  <div className="w-8 text-center pr-2">ID</div>
+                  <div className="flex-1 px-4 border-l border-gray-100">Task Details</div>
+                  <div className="w-20 text-center border-l border-gray-100">Duration</div>
+                  <div className="w-28 text-center border-l border-gray-100">Assignee</div>
+                  <div className="w-10 text-center border-l border-gray-100">Done</div>
+                  <div className="w-10"></div>
                 </div>
-
-                {weekendColumns}
-
-                {visibleTasks.map(({ task }, idx) => {
-                  if (task.id !== selectedTaskId) return null;
-                  return <div key={`row-highlight-${task.id}`} className="absolute left-0 right-0 h-10 row-highlight-active pointer-events-none" style={{ top: idx * 40 + 48 }}></div>;
-                })}
-
-                <div className="absolute top-0 bottom-0 w-[2px] bg-red-500/60 pointer-events-none z-20 shadow-[0_0_12px_rgba(239,68,68,0.2)]" style={{ left: todayLeft - 1 }}>
-                  <div className="sticky top-[48px] bg-red-500 text-[8px] text-white px-2 py-0.5 rounded-b font-black tracking-tighter shadow-lg flex items-center justify-center -translate-x-1/2">TODAY</div>
-                </div>
-
-                <svg className="absolute inset-0 pointer-events-none z-10" style={{ width: '100%', height: '100%' }}>
-                  <defs>
-                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
-                      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#94a3b8" />
-                    </marker>
-                    <marker id="arrowhead-selected" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
-                      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#2563eb" />
-                    </marker>
-                    <marker id="arrowhead-conflict" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
-                      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#ef4444" />
-                    </marker>
-                  </defs>
-                  {dependencyLines}
-                </svg>
-
-                {visibleTasks.map(({ task }, idx) => {
-                  const dayOffset = getDiffDays(timelineRange.start, task.startDate, false);
-                  const totalCalDays = getDiffDays(task.startDate, task.endDate, false) + 1;
-                  const width = totalCalDays * zoomLevel;
-                  const top = idx * 40 + 10 + 48;
-                  const originalIndex = visibleTasks[idx].originalIndex;
-                  const hasChildren = isParent(originalIndex);
-                  const hasConflict = conflictedTaskIds.has(task.id);
-                  const isOverdue = overdueTaskIds.has(task.id);
-                  const isSelected = selectedTaskId === task.id;
-                  
-                  const barColor = task.color || '#3b82f6';
-                  const summaryColor = task.color || '#0f172a';
-
-                  return (
-                    <div key={task.id} className={`absolute group transition-all duration-300 ${isSelected ? 'task-bar-selected' : ''} ${isOverdue ? 'task-bar-overdue' : ''}`} style={{ left: dayOffset * zoomLevel, top, width: Math.max(width, 4), height: 20 }} onClick={() => { setSelectedTaskId(task.id); setIsShowingProjectSettings(false); }}>
-                      {hasChildren ? (
-                        <div className="relative w-full h-full">
-                          <div className={`absolute top-0 left-0 right-0 h-2 rounded-sm transition-all shadow-md ${isSelected ? 'ring-2 ring-blue-500' : ''} ${hasConflict ? 'ring-2 ring-red-500' : ''}`} style={{ backgroundColor: summaryColor }}></div>
-                          <div className={`absolute top-0 left-0 w-[2.5px] h-4 transition-colors`} style={{ backgroundColor: summaryColor }}></div>
-                          <div className={`absolute top-0 right-0 w-[2.5px] h-4 transition-colors`} style={{ backgroundColor: summaryColor }}></div>
-                          <div className={`absolute top-0 left-0 border-t-[8px] border-r-[8px] border-r-transparent transition-colors`} style={{ borderTopColor: summaryColor }}></div>
-                          <div className={`absolute top-0 right-0 border-t-[8px] border-l-[8px] border-l-transparent transition-colors`} style={{ borderTopColor: summaryColor }}></div>
+                <div ref={tableRef} className="flex-1 overflow-y-auto no-scrollbar" onScroll={handleScroll}>
+                  {visibleTasks.map(({ task, originalIndex }, visibleIdx) => {
+                    const hasChildren = isParent(originalIndex);
+                    const hasConflict = conflictedTaskIds.has(task.id);
+                    const isOverdue = overdueTaskIds.has(task.id);
+                    const isSelected = selectedTaskIds.includes(task.id);
+                    const isBeingDragged = draggedRowIndex === originalIndex;
+                    
+                    return (
+                      <div 
+                        key={task.id} 
+                        draggable={true}
+                        onDragStart={(e) => handleTaskDragStart(e, originalIndex)}
+                        onDragOver={(e) => handleTaskDragOver(e, originalIndex)}
+                        onDragEnd={handleTaskDragEnd}
+                        onClick={(e) => handleSelectTask(e, task.id, originalIndex)} 
+                        className={`group h-10 border-b border-gray-50 flex items-center cursor-pointer transition-all duration-200 ${
+                          isSelected ? 'bg-blue-50/70 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]' : 'hover:bg-gray-50/50'
+                        } ${hasConflict ? 'bg-red-50/30' : ''} ${isOverdue ? 'bg-amber-50/30' : ''} ${isBeingDragged ? 'opacity-40 grayscale' : ''}`}
+                      >
+                        <div className="w-5 flex items-center justify-center text-gray-300 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity pl-1">
+                          <i className="fa-solid fa-grip-vertical text-[10px]"></i>
                         </div>
-                      ) : (
-                        <div 
-                          onMouseDown={(e) => handleBarMouseDown(e, task, 'move')} 
-                          className={`absolute inset-0 rounded-md shadow-sm transition-all cursor-move ring-offset-2 ${isSelected ? 'ring-2 ring-blue-500 shadow-xl' : ''} ${hasConflict ? 'ring-2 ring-red-500' : ''} ${isOverdue ? 'border-2 border-amber-500' : ''}`}
-                          style={{ backgroundColor: hasConflict ? '#fee2e2' : (isOverdue ? '#fffbeb' : barColor) }}
-                        >
-                          <div className={`h-full rounded-l-md transition-all ${isSelected ? 'bg-white/30' : (isOverdue ? 'bg-amber-400/40' : 'bg-black/10')}`} style={{ width: `${task.progress}%` }}></div>
-                          <div onMouseDown={(e) => handleBarMouseDown(e, task, 'resize')} className="absolute right-0 top-0 bottom-0 w-2.5 cursor-ew-resize hover:bg-white/20 transition-colors rounded-r-md"></div>
+                        <div className={`w-1 h-full transition-all duration-300 ${isSelected ? 'bg-blue-600 scale-y-100' : 'bg-transparent scale-y-0'}`}></div>
+                        <div className="w-7 text-[10px] text-gray-400 font-black text-center pr-2">{originalIndex + 1}</div>
+                        <div className="flex-1 px-2 overflow-hidden flex items-center" style={{ paddingLeft: `${task.level * 24 + 4}px` }}>
+                          {hasChildren && <button onClick={(e) => { e.stopPropagation(); handleUpdateTask(task.id, { isCollapsed: !task.isCollapsed }); }} className="mr-2 text-gray-400 hover:text-gray-600 transition-transform duration-200" style={{ transform: task.isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}><i className="fa-solid fa-chevron-down text-[10px]"></i></button>}
+                          {!hasChildren && <div className="w-4 mr-2"></div>}
+                          <div className="flex-1 flex items-center gap-2 overflow-hidden">
+                            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: task.color || (hasChildren ? '#0f172a' : '#3b82f6') }}></div>
+                            <input type="text" value={task.name} readOnly={hasChildren} onChange={(e) => handleUpdateTask(task.id, { name: e.target.value })} className={`w-full bg-transparent border-none text-[13px] font-medium focus:ring-0 truncate ${hasChildren ? 'font-bold cursor-default' : ''} ${isSelected ? 'text-blue-900' : 'text-slate-800'}`} />
+                            <div className="flex items-center gap-1.5 shrink-0 ml-auto mr-2">
+                              {isOverdue && !hasChildren && <span className="bg-amber-100 text-amber-700 text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded flex items-center gap-1"><i className="fa-solid fa-clock-rotate-left"></i> LATE</span>}
+                              {hasConflict && !hasChildren && <i className="fa-solid fa-triangle-exclamation text-[10px] text-red-500 flex-shrink-0 animate-pulse" title="Dependency Conflict"></i>}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      <div className={`absolute left-full ml-4 top-1/2 -translate-y-1/2 text-[11px] whitespace-nowrap pointer-events-none transition-all duration-300 flex items-center gap-2 ${isSelected ? 'opacity-100 font-black scale-105 text-blue-700 bg-white shadow-xl px-2.5 py-1 rounded-lg border border-blue-100' : 'opacity-0 group-hover:opacity-100 text-gray-500 bg-white/80 px-2 rounded-md translate-x-2'}`}>
-                        {hasConflict && <i className="fa-solid fa-triangle-exclamation text-red-500"></i>}
-                        {isOverdue && !hasChildren && <span className="text-amber-600 font-black uppercase tracking-tighter text-[9px] flex items-center gap-1"><i className="fa-solid fa-clock-rotate-left"></i> OVERDUE</span>}
-                        <span>{task.name} {task.assignee ? `• ${task.assignee}` : ''} ({task.duration} d)</span>
+                        <div className="w-20 text-center">
+                          <input type="number" step="1" value={task.duration} readOnly={hasChildren} onChange={(e) => handleUpdateTask(task.id, { duration: parseInt(e.target.value) || 0 })} className={`w-10 text-center bg-transparent border-none text-[12px] font-bold focus:ring-0 ${hasChildren ? 'text-slate-900' : 'text-slate-600'}`} />
+                          <span className="text-[10px] font-bold text-gray-300">d</span>
+                        </div>
+                        <div className="w-28 text-center px-2">
+                          <input type="text" placeholder="Unassigned" value={task.assignee || ''} onChange={(e) => handleUpdateTask(task.id, { assignee: e.target.value })} className="w-full bg-transparent border-none text-[11px] font-medium text-gray-600 focus:ring-0 text-center italic placeholder:text-gray-300" />
+                        </div>
+                        <div className="w-10 flex items-center justify-center">
+                          <input
+                            type="checkbox"
+                            checked={task.progress === 100}
+                            onChange={(e) => handleUpdateTask(task.id, { progress: e.target.checked ? 100 : 0 })}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                            disabled={hasChildren}
+                          />
+                        </div>
+                        <div className="w-10 flex items-center justify-center">
+                          {task.attachments.length > 0 && <i className="fa-solid fa-paperclip text-[10px] text-blue-500 bg-blue-50 p-1 rounded-md"></i>}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                  <div className="h-40"></div>
+                </div>
               </div>
-            </div>
-          </div>
+
+              <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 relative gantt-chart-container">
+                <div ref={gridRef} className="flex-1 overflow-auto bg-white" onScroll={handleScroll}>
+                  <div className="relative gantt-grid" style={{ width: totalDays * zoomLevel, height: visibleTasks.length * 40 + 200, backgroundImage: `linear-gradient(to right, #f3f4f6 1px, transparent 1px), linear-gradient(to bottom, #f3f4f6 1px, transparent 1px)`, backgroundSize: `${zoomLevel}px 40px` }}>
+                    <div className="sticky top-0 z-30 bg-white border-b border-gray-200 flex flex-col shadow-sm" style={{ width: totalDays * zoomLevel }}>
+                      <div className="flex h-6">{monthHeaders}</div>
+                      <div className="flex h-6">{dateHeaders}</div>
+                    </div>
+
+                    {weekendColumns}
+
+                    {visibleTasks.map(({ task }, idx) => {
+                      if (!selectedTaskIds.includes(task.id)) return null;
+                      return <div key={`row-highlight-${task.id}`} className="absolute left-0 right-0 h-10 row-highlight-active pointer-events-none" style={{ top: idx * 40 + 48 }}></div>;
+                    })}
+
+                    <div className="absolute top-0 bottom-0 w-[2px] bg-red-500/60 pointer-events-none z-20 shadow-[0_0_12px_rgba(239,68,68,0.2)]" style={{ left: todayLeft - 1 }}>
+                      <div className="sticky top-[48px] bg-red-500 text-[8px] text-white px-2 py-0.5 rounded-b font-black tracking-tighter shadow-lg flex items-center justify-center -translate-x-1/2">TODAY</div>
+                    </div>
+
+                    <svg className="absolute inset-0 pointer-events-none z-10" style={{ width: '100%', height: '100%' }}>
+                      <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
+                          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#94a3b8" />
+                        </marker>
+                        <marker id="arrowhead-selected" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
+                          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#2563eb" />
+                        </marker>
+                        <marker id="arrowhead-conflict" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
+                          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#ef4444" />
+                        </marker>
+                      </defs>
+                      {dependencyLines}
+                    </svg>
+
+                    {visibleTasks.map(({ task }, idx) => {
+                      const dayOffset = getDiffDays(timelineRange.start, task.startDate, false);
+                      const totalCalDays = getDiffDays(task.startDate, task.endDate, false) + 1;
+                      const width = totalCalDays * zoomLevel;
+                      const top = idx * 40 + 10 + 48;
+                      const originalIndex = visibleTasks[idx].originalIndex;
+                      const hasChildren = isParent(originalIndex);
+                      const hasConflict = conflictedTaskIds.has(task.id);
+                      const isOverdue = overdueTaskIds.has(task.id);
+                      const isSelected = selectedTaskIds.includes(task.id);
+                      
+                      const barColor = task.color || '#3b82f6';
+                      const summaryColor = task.color || '#0f172a';
+
+                      return (
+                        <div key={task.id} className={`absolute group transition-all duration-300 ${isSelected ? 'task-bar-selected' : ''} ${isOverdue ? 'task-bar-overdue' : ''}`} style={{ left: dayOffset * zoomLevel, top, width: Math.max(width, 4), height: 20 }} onClick={(e) => handleSelectTask(e, task.id, originalIndex)}>
+                          {hasChildren ? (
+                            <div className="relative w-full h-full">
+                              <div className={`absolute top-0 left-0 right-0 h-2 rounded-sm transition-all shadow-md ${isSelected ? 'ring-2 ring-blue-500' : ''} ${hasConflict ? 'ring-2 ring-red-500' : ''}`} style={{ backgroundColor: summaryColor }}></div>
+                              <div className={`absolute top-0 left-0 w-[2.5px] h-4 transition-colors`} style={{ backgroundColor: summaryColor }}></div>
+                              <div className={`absolute top-0 right-0 w-[2.5px] h-4 transition-colors`} style={{ backgroundColor: summaryColor }}></div>
+                              <div className={`absolute top-0 left-0 border-t-[8px] border-r-[8px] border-r-transparent transition-colors`} style={{ borderTopColor: summaryColor }}></div>
+                              <div className={`absolute top-0 right-0 border-t-[8px] border-l-[8px] border-l-transparent transition-colors`} style={{ borderTopColor: summaryColor }}></div>
+                            </div>
+                          ) : (
+                            <div 
+                              onMouseDown={(e) => handleBarMouseDown(e, task, 'move')} 
+                              className={`absolute inset-0 rounded-md shadow-sm transition-all cursor-move ring-offset-2 ${isSelected ? 'ring-2 ring-blue-500 shadow-xl' : ''} ${hasConflict ? 'ring-2 ring-red-500' : ''} ${isOverdue ? 'border-2 border-amber-500' : ''}`}
+                              style={{ backgroundColor: hasConflict ? '#fee2e2' : (isOverdue ? '#fffbeb' : barColor) }}
+                            >
+                              <div className={`h-full rounded-l-md transition-all ${isSelected ? 'bg-white/30' : (isOverdue ? 'bg-amber-400/40' : 'bg-black/10')}`} style={{ width: `${task.progress}%` }}></div>
+                              <div onMouseDown={(e) => handleBarMouseDown(e, task, 'resize')} className="absolute right-0 top-0 bottom-0 w-2.5 cursor-ew-resize hover:bg-white/20 transition-colors rounded-r-md"></div>
+                            </div>
+                          )}
+                          <div className={`absolute left-full ml-4 top-1/2 -translate-y-1/2 text-[11px] whitespace-nowrap pointer-events-none transition-all duration-300 flex items-center gap-2 ${isSelected ? 'opacity-100 font-black scale-105 text-blue-700 bg-white shadow-xl px-2.5 py-1 rounded-lg border border-blue-100' : 'opacity-0 group-hover:opacity-100 text-gray-500 bg-white/80 px-2 rounded-md translate-x-2'}`}>
+                            {hasConflict && <i className="fa-solid fa-triangle-exclamation text-red-500"></i>}
+                            {isOverdue && !hasChildren && <span className="text-amber-600 font-black uppercase tracking-tighter text-[9px] flex items-center gap-1"><i className="fa-solid fa-clock-rotate-left"></i> OVERDUE</span>}
+                            <span>{task.name} {task.assignee ? `• ${task.assignee}` : ''} ({task.duration} d)</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <CalendarView 
+              tasks={tasks} 
+              selectedTaskId={selectedTaskIds.length > 0 ? selectedTaskIds[selectedTaskIds.length - 1] : null} 
+              onSelectTask={(id) => { setSelectedTaskIds([id]); setIsShowingProjectSettings(false); }} 
+              now={now} 
+            />
+          )}
         </div>
+        
         <footer className="h-10 border-t border-gray-200 flex items-center px-6 bg-white text-[10px] font-bold text-gray-400 justify-between shrink-0 z-40">
           <div className="flex gap-6 items-center">
             <span className="text-gray-900">{tasks.length} <span className="text-gray-400 font-medium">TASKS</span></span>
@@ -1051,19 +1159,18 @@ const App: React.FC = () => {
             <span className="text-emerald-600">{tasks.filter(t => t.progress === 100).length} <span className="text-gray-400 font-medium uppercase tracking-tighter">Completed</span></span>
             {overdueTaskIds.size > 0 && <span className="text-amber-600 flex items-center gap-1"><i className="fa-solid fa-clock-rotate-left"></i> {overdueTaskIds.size} OVERDUE</span>}
             {conflictedTaskIds.size > 0 && <span className="text-red-500 flex items-center gap-1"><i className="fa-solid fa-triangle-exclamation"></i> {conflictedTaskIds.size} CRITICAL CONFLICTS</span>}
+            {selectedTaskIds.length > 0 && (
+              <>
+                <div className="w-[1px] h-3 bg-gray-200"></div>
+                <span className="text-blue-600 font-black tracking-widest uppercase">{selectedTaskIds.length} SELECTED</span>
+              </>
+            )}
             <div className="w-[1px] h-3 bg-gray-200"></div>
             <span className="flex items-center gap-1.5"><i className="fa-solid fa-business-time"></i> WORK DAYS: M-F</span>
-            <div className="w-[1px] h-3 bg-gray-200"></div>
-            <span className="flex items-center gap-1.5 text-slate-400">
-               <i className={`fa-solid ${lastSaved ? 'fa-cloud-check text-emerald-500' : 'fa-cloud-arrow-up'}`}></i>
-               {lastSaved ? `SAVED ${lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'SYNCING...'}
-            </span>
           </div>
           <div className="flex gap-4">
             <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-blue-500 shadow-sm"></div> PLANNED</span>
-            <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-emerald-500 shadow-sm"></div> COMPLETED</span>
             <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-amber-400 ring-1 ring-amber-500 shadow-sm"></div> OVERDUE</span>
-            <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-red-400 ring-1 ring-red-500 shadow-sm"></div> CONFLICT</span>
             <span className="flex items-center gap-1.5 ml-2"><div className="w-4 h-2.5 rounded-sm bg-slate-900 shadow-sm"></div> SUMMARY</span>
           </div>
         </footer>
@@ -1073,8 +1180,8 @@ const App: React.FC = () => {
             isShowingProjectSettings={isShowingProjectSettings}
             activeProject={activeProject} 
             allTasks={tasks} 
-            onClose={() => { setSelectedTaskId(null); setIsShowingProjectSettings(false); }} 
-            onUpdateTask={(updates) => selectedTaskId && handleUpdateTask(selectedTaskId, updates)} 
+            onClose={() => { setSelectedTaskIds([]); setIsShowingProjectSettings(false); }} 
+            onUpdateTask={(updates) => selectedTaskIds.length > 0 && handleUpdateTask(selectedTaskIds[selectedTaskIds.length - 1], updates)} 
             onDeleteProject={() => setIdOfProjectToDelete(activeProject.id)}
           />
         </div>
