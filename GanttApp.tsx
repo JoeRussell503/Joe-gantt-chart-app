@@ -965,7 +965,7 @@ const App: React.FC = () => {
            onClick={() => setIsShareModalOpen(true)}
            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-black tracking-widest hover:bg-blue-700 transition-all flex items-center gap-2 shadow-md"
 >
-<i className=fa-solid fa-share-nodes"></i> SHARE
+<i className=fa-solid "fa-share-nodes"></i> SHARE
 </button>
 
             <div className="relative" ref={exportDropdownRef}>
