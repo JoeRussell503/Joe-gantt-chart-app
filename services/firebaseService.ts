@@ -11,7 +11,8 @@ import {
   onSnapshot,
   Timestamp,
   arrayUnion,
-  arrayRemove
+  arrayRemove,
+  deleteField
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { Project, Task } from '../types';
@@ -34,14 +35,15 @@ export const createProject = async (name: string, tasks: Task[] = []): Promise<s
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     owner: user.uid,
-    members: [
-      {
+    members: {
+      [user.uid]: {
         uid: user.uid,
         email: user.email || '',
         role: 'owner',
         displayName: user.displayName || user.email || 'Unknown'
       }
-    ]
+    }
+}
   };
 
   await setDoc(doc(projectsCollection, projectId), {
@@ -157,21 +159,25 @@ export const shareProject = async (
     throw new Error('Only the owner can share this project');
   }
 
-  // Check if user already has access
-  const existingMember = projectData.members?.find((m: any) => m.email === email);
+  const members = projectData.members || {};
+  const existingMember = Object.values(members).find((m: any) => m.email === email);
   if (existingMember) {
     throw new Error('User already has access');
   }
 
+  const memberId = `member_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
   await updateDoc(projectDoc, {
-    members: arrayUnion({
+    [`members.${memberId}`]: {
       email,
       role,
-      uid: '', // Will be filled when user signs in
+      uid: '',
       displayName: email.split('@')[0]
-    }),
+    },
     updatedAt: Timestamp.now()
   });
+};
+      
 };
 
 // Remove member from project
@@ -189,13 +195,16 @@ export const removeMember = async (projectId: string, memberEmail: string): Prom
     throw new Error('Only the owner can remove members');
   }
 
-  const memberToRemove = projectData.members?.find((m: any) => m.email === memberEmail);
-  if (!memberToRemove) throw new Error('Member not found');
+  const members = projectData.members || {};
+  const memberKey = Object.keys(members).find(key => members[key].email === memberEmail);
+  
+  if (!memberKey) throw new Error('Member not found');
 
   await updateDoc(projectDoc, {
-    members: arrayRemove(memberToRemove),
+    [`members.${memberKey}`]: deleteField(),
     updatedAt: Timestamp.now()
   });
+};
 };
 
 // Get user's role in a project

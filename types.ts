@@ -37,7 +37,7 @@ export interface Project {
   createdAt: string;
   updatedAt?: string;
   owner?: string;
-  members?: ProjectMember[];
+  members?: { [key: string]: ProjectMember };
 }
 
 export interface ProjectState {

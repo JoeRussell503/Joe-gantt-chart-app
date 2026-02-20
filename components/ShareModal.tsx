@@ -227,7 +227,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
             People with access ({members.length})
           </h3>
           <div className="space-y-2 max-h-64 overflow-y-auto">
-            {members.map((member) => (
+            {Object.values(members).map((member: any) => (
               <div
                 key={member.email}
                 className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-gray-200"
