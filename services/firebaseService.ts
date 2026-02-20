@@ -43,7 +43,7 @@ export const createProject = async (name: string, tasks: Task[] = []): Promise<s
         displayName: user.displayName || user.email || 'Unknown'
       }
     }
-}
+  };
 
   await setDoc(doc(projectsCollection, projectId), {
     ...project,
@@ -79,6 +79,7 @@ export const getUserProjects = async (): Promise<Project[]> => {
       updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt
     } as Project;
   });
+};
 
 // Subscribe to real-time project updates
 export const subscribeToProject = (
@@ -175,8 +176,6 @@ export const shareProject = async (
     updatedAt: Timestamp.now()
   });
 };
-      
-};
 
 // Remove member from project
 export const removeMember = async (projectId: string, memberEmail: string): Promise<void> => {
@@ -203,7 +202,6 @@ export const removeMember = async (projectId: string, memberEmail: string): Prom
     updatedAt: Timestamp.now()
   });
 };
-};
 
 // Get user's role in a project
 export const getUserRole = async (projectId: string): Promise<'owner' | 'editor' | 'viewer' | null> => {
@@ -216,7 +214,8 @@ export const getUserRole = async (projectId: string): Promise<'owner' | 'editor'
   if (!projectSnap.exists()) return null;
   
   const projectData = projectSnap.data();
-  const member = projectData.members?.find((m: any) => 
+  const members = projectData.members || {};
+  const member = Object.values(members).find((m: any) => 
     m.uid === user.uid || m.email === user.email
   );
 
