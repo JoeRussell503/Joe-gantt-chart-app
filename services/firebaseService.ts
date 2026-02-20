@@ -44,7 +44,6 @@ export const createProject = async (name: string, tasks: Task[] = []): Promise<s
       }
     }
 }
-  };
 
   await setDoc(doc(projectsCollection, projectId), {
     ...project,
@@ -80,7 +79,6 @@ export const getUserProjects = async (): Promise<Project[]> => {
       updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt
     } as Project;
   });
-};
 
 // Subscribe to real-time project updates
 export const subscribeToProject = (
