@@ -59,26 +59,23 @@ export const getUserProjects = async (): Promise<Project[]> => {
   const user = auth.currentUser;
   if (!user) return [];
 
-  const q = query(
-    projectsCollection,
-    where('members', 'array-contains', { 
-      uid: user.uid, 
-      email: user.email,
-      role: 'owner',
-      displayName: user.displayName || user.email
+  // Query all projects and filter on client side
+  const snapshot = await getDocs(projectsCollection);
+  
+  return snapshot.docs
+    .map(doc => {
+      const data = doc.data();
+      return {
+        ...data,
+        id: doc.id,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt
+      } as Project;
     })
-  );
-
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => {
-    const data = doc.data();
-    return {
-      ...data,
-      id: doc.id,
-      createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-      updatedAt: data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt
-    } as Project;
-  });
+    .filter(project => {
+      const members = project.members || {};
+      return user.uid in members;
+    });
 };
 
 // Subscribe to real-time project updates
