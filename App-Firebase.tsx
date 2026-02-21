@@ -40,7 +40,7 @@ const App: React.FC = () => {
     return <SignInScreen />;
   }
 
-  return <GanttApp user={user} onSignOut={handleSignOut} />;
+  return <GanttApp />;
 };
 
 export default App;
