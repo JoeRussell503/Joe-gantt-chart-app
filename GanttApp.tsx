@@ -673,34 +673,29 @@ const App: React.FC = () => {
         const sourceVisibleIdx = visibleTasks.findIndex(vt => vt.task.id === depId);
         if (sourceVisibleIdx !== -1) {
           const sourceTask = visibleTasks[sourceVisibleIdx].task;
-          const fromX = (getDiffDays(timelineRange.start, sourceTask.endDate, false)) * zoomLevel;
-          const fromY = sourceVisibleIdx * 40 + 20 + 48;
-          const toX = (getDiffDays(timelineRange.start, task.startDate, false)) * zoomLevel;
-          const toY = targetIdx * 40 + 20 + 48;
+          
+          // Calculate positions
+          const sourceEndX = (getDiffDays(timelineRange.start, sourceTask.endDate, false)) * zoomLevel;
+          const sourceY = sourceVisibleIdx * 40 + 20 + 48;
+          const targetStartX = (getDiffDays(timelineRange.start, task.startDate, false)) * zoomLevel;
+          const targetY = targetIdx * 40 + 20 + 48;
           
           const isConflict = task.startDate < sourceTask.endDate;
           const isSelectedDep = selectedTaskIds.includes(task.id) || selectedTaskIds.includes(depId);
           const isAnySelected = selectedTaskIds.length > 0;
           
-          const midX = fromX + (toX - fromX) / 2;
-          const cp1X = fromX + Math.min(20, (toX - fromX) / 4);
-          const cp2X = toX - Math.min(20, (toX - fromX) / 4);
-          
-          const className = [
-            'dependency-line-base',
-            isConflict ? 'dependency-line-conflict' : '',
-            isSelectedDep ? 'dependency-line-selected' : (isAnySelected ? 'dependency-line-idle' : '')
-          ].filter(Boolean).join(' ');
+          // Right-angle path: horizontal from source end, then vertical, then horizontal to target
+          const midX = targetStartX - 20;
+          const path = `M ${sourceEndX} ${sourceY} L ${midX} ${sourceY} L ${midX} ${targetY} L ${targetStartX} ${targetY}`;
 
           lines.push(
             <path 
               key={`line-${depId}-${task.id}`} 
-              d={`M ${fromX} ${fromY} C ${cp1X} ${fromY}, ${cp2X} ${toY}, ${toX} ${toY}`} 
+              d={path}
               fill="none" 
               stroke={isConflict ? "#ef4444" : isSelectedDep ? "#2563eb" : "#94a3b8"} 
               strokeWidth={isSelectedDep ? "2.5" : "1.5"} 
               markerEnd={isConflict ? "url(#arrowhead-conflict)" : isSelectedDep ? "url(#arrowhead-selected)" : "url(#arrowhead)"}
-              className={className} 
             />
           );
         }
