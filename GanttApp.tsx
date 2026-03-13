@@ -11,7 +11,7 @@ interface DragInfo {
   type: 'move' | 'resize';
   startX: number;
   originalStartDate: string;
-  originalDuration: number;
+  originalDuration: number
   snapshot: Task[];
 }
 
@@ -484,24 +484,36 @@ const App: React.FC = () => {
 
   const handleTaskDragStart = (e: React.DragEvent, originalIndex: number) => {
     setDraggedRowIndex(originalIndex);
-    e.dataTransfer.effectAllowed = 'move';
     const img = new Image();
-    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
     e.dataTransfer.setDragImage(img, 0, 0);
   };
 
-  const handleTaskDragOver = (e: React.DragEvent, index: number) => {
+  const handleTaskDragOver = (e: React.DragEvent, targetIndex: number) => {
     e.preventDefault();
-    if (draggedRowIndex === null || draggedRowIndex === index) return;
-    
+    if (draggedRowIndex === null || draggedRowIndex === targetIndex) return;
+
     setProjects(prev => prev.map(p => {
       if (p.id !== activeProjectId) return p;
-      const newTasks = [...p.tasks];
-      const [removed] = newTasks.splice(draggedRowIndex, 1);
-      newTasks.splice(index, 0, removed);
+      const tasks = [...p.tasks];
+      const draggedTask = tasks[draggedRowIndex];
+      if (!draggedTask) return p;
+
+      // Don't allow dragging group headers (level 0 rows)
+      if (draggedTask.level === 0) return p;
+
+      // Remove dragged task from its current position
+      const newTasks = tasks.filter((_, i) => i !== draggedRowIndex);
+
+      // Adjust target index after removal
+      const adjustedTarget = draggedRowIndex < targetIndex ? targetIndex - 1 : targetIndex;
+
+      // Insert at new position (works across groups because level is preserved)
+      newTasks.splice(adjustedTarget, 0, draggedTask);
+
       return { ...p, tasks: newTasks };
     }));
-    setDraggedRowIndex(index);
+
+    setDraggedRowIndex(prev => prev !== null ? (draggedRowIndex < targetIndex ? targetIndex - 1 : targetIndex) : null);
   };
 
   const handleTaskDragEnd = () => {
