@@ -490,37 +490,50 @@ const App: React.FC = () => {
     e.dataTransfer.setDragImage(img, 0, 0);
   };
 
-  // FIX: Use the stable draggedTaskId to find the task, not the stale draggedRowIndex
+  // Group-aware drag: moves entire group (header + all children) as one block
   const handleTaskDragOver = (e: React.DragEvent, targetOriginalIndex: number) => {
     e.preventDefault();
     if (draggedTaskId === null) return;
 
     setProjects(prev => prev.map(p => {
       if (p.id !== activeProjectId) return p;
-      const tasksCopy = [...p.tasks];
+      const tc = [...p.tasks];
 
-      const draggedIndex = tasksCopy.findIndex(t => t.id === draggedTaskId);
-      if (draggedIndex === -1 || draggedIndex === targetOriginalIndex) return p;
+      const draggedIndex = tc.findIndex(t => t.id === draggedTaskId);
+      if (draggedIndex === -1) return p;
 
-      const draggedTask = tasksCopy[draggedIndex];
+      const draggedTask = tc[draggedIndex];
 
-      if (draggedTask.level === 0) return p;
+      // Build the block: dragged task + all its descendants
+      const block: Task[] = [draggedTask];
+      for (let i = draggedIndex + 1; i < tc.length; i++) {
+        if (tc[i].level > draggedTask.level) {
+          block.push(tc[i]);
+        } else {
+          break;
+        }
+      }
+      const blockSize = block.length;
 
-      tasksCopy.splice(draggedIndex, 1);
-      const adjustedTarget = draggedIndex < targetOriginalIndex
-        ? targetOriginalIndex - 1
+      // Don't move if target is within the block itself
+      if (targetOriginalIndex >= draggedIndex && targetOriginalIndex < draggedIndex + blockSize) return p;
+
+      // Remove block from current position
+      tc.splice(draggedIndex, blockSize);
+
+      // Adjust target after removal, then insert
+      const insertAt = draggedIndex < targetOriginalIndex
+        ? targetOriginalIndex - blockSize
         : targetOriginalIndex;
-      tasksCopy.splice(adjustedTarget, 0, draggedTask);
+      tc.splice(insertAt, 0, ...block);
 
-      return { ...p, tasks: tasksCopy };
+      return { ...p, tasks: tc };
     }));
 
-    setDraggedRowIndex(targetOriginalIndex < draggedRowIndex!
-      ? targetOriginalIndex
-      : targetOriginalIndex - 1);
+    setDraggedRowIndex(targetOriginalIndex);
   };
 
-  const handleTaskDragEnd = () => {
+    const handleTaskDragEnd = () => {
     setDraggedRowIndex(null);
     setDraggedTaskId(null);
   };
