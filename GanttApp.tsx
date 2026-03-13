@@ -66,9 +66,10 @@ const App: React.FC = () => {
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [showUploadStep, setShowUploadStep] = useState(false);
   const [isParsingFile, setIsParsingFile] = useState(false);
+  // FIX: Store both the row index (for visual opacity) and the stable task ID
   const [draggedRowIndex, setDraggedRowIndex] = useState<number | null>(null);
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
-  // Fix: Move declarations of activeProject and tasks before the useEffect that references them
   const activeProject = useMemo(() => 
     projects.find(p => p.id === activeProjectId) || projects[0], 
   [projects, activeProjectId]);
@@ -100,7 +101,6 @@ const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // Keyboard Shortcuts Handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -382,7 +382,7 @@ const App: React.FC = () => {
   const handleCopy = () => {
     if (selectedTaskIds.length === 0) return;
     const toCopy = tasks.filter(t => selectedTaskIds.includes(t.id));
-    setClipboard(JSON.parse(JSON.stringify(toCopy))); // Deep clone
+    setClipboard(JSON.parse(JSON.stringify(toCopy)));
   };
 
   const handlePaste = () => {
@@ -391,7 +391,7 @@ const App: React.FC = () => {
     const newTasks: Task[] = clipboard.map(t => ({
       ...t,
       id: Math.random().toString(36).substr(2, 9),
-      dependencies: [], // Dependencies usually reset on paste to avoid loops
+      dependencies: [],
       progress: 0,
       status: 'Not Started'
     }));
@@ -482,42 +482,47 @@ const App: React.FC = () => {
     }
   };
 
-  const handleTaskDragStart = (e: React.DragEvent, originalIndex: number) => {
+  // FIX: Store the stable task ID at drag start, not just the row index
+  const handleTaskDragStart = (e: React.DragEvent, task: Task, originalIndex: number) => {
     setDraggedRowIndex(originalIndex);
+    setDraggedTaskId(task.id);
     const img = new Image();
     e.dataTransfer.setDragImage(img, 0, 0);
   };
 
-  const handleTaskDragOver = (e: React.DragEvent, targetIndex: number) => {
+  // FIX: Use the stable draggedTaskId to find the task, not the stale draggedRowIndex
+  const handleTaskDragOver = (e: React.DragEvent, targetOriginalIndex: number) => {
     e.preventDefault();
-    if (draggedRowIndex === null || draggedRowIndex === targetIndex) return;
+    if (draggedTaskId === null) return;
 
     setProjects(prev => prev.map(p => {
       if (p.id !== activeProjectId) return p;
-      const tasks = [...p.tasks];
-      const draggedTask = tasks[draggedRowIndex];
-      if (!draggedTask) return p;
+      const tasksCopy = [...p.tasks];
 
-      // Don't allow dragging group headers (level 0 rows)
+      const draggedIndex = tasksCopy.findIndex(t => t.id === draggedTaskId);
+      if (draggedIndex === -1 || draggedIndex === targetOriginalIndex) return p;
+
+      const draggedTask = tasksCopy[draggedIndex];
+
       if (draggedTask.level === 0) return p;
 
-      // Remove dragged task from its current position
-      const newTasks = tasks.filter((_, i) => i !== draggedRowIndex);
+      tasksCopy.splice(draggedIndex, 1);
+      const adjustedTarget = draggedIndex < targetOriginalIndex
+        ? targetOriginalIndex - 1
+        : targetOriginalIndex;
+      tasksCopy.splice(adjustedTarget, 0, draggedTask);
 
-      // Adjust target index after removal
-      const adjustedTarget = draggedRowIndex < targetIndex ? targetIndex - 1 : targetIndex;
-
-      // Insert at new position (works across groups because level is preserved)
-      newTasks.splice(adjustedTarget, 0, draggedTask);
-
-      return { ...p, tasks: newTasks };
+      return { ...p, tasks: tasksCopy };
     }));
 
-    setDraggedRowIndex(prev => prev !== null ? (draggedRowIndex < targetIndex ? targetIndex - 1 : targetIndex) : null);
+    setDraggedRowIndex(targetOriginalIndex < draggedRowIndex!
+      ? targetOriginalIndex
+      : targetOriginalIndex - 1);
   };
 
   const handleTaskDragEnd = () => {
     setDraggedRowIndex(null);
+    setDraggedTaskId(null);
   };
 
   const handleAiGeneration = async () => {
@@ -686,7 +691,6 @@ const App: React.FC = () => {
         if (sourceVisibleIdx !== -1) {
           const sourceTask = visibleTasks[sourceVisibleIdx].task;
           
-          // Calculate positions
           const sourceEndX = (getDiffDays(timelineRange.start, sourceTask.endDate, false)) * zoomLevel;
           const sourceY = sourceVisibleIdx * 40 + 20 + 48;
           const targetStartX = (getDiffDays(timelineRange.start, task.startDate, false)) * zoomLevel;
@@ -694,9 +698,7 @@ const App: React.FC = () => {
           
           const isConflict = task.startDate < sourceTask.endDate;
           const isSelectedDep = selectedTaskIds.includes(task.id) || selectedTaskIds.includes(depId);
-          const isAnySelected = selectedTaskIds.length > 0;
           
-          // Right-angle path: horizontal from source end, then vertical, then horizontal to target
           const midX = targetStartX - 20;
           const path = `M ${sourceEndX} ${sourceY} L ${midX} ${sourceY} L ${midX} ${targetY} L ${targetStartX} ${targetY}`;
 
@@ -718,7 +720,6 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-white text-gray-900 font-sans select-none overflow-hidden">
-      {/* New Project Modal */}
       {isNewProjectModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center animate-in fade-in duration-300">
           <div className="bg-white p-8 rounded-3xl shadow-2xl w-[500px] max-w-[90vw] animate-in zoom-in-95 duration-200">
@@ -949,7 +950,7 @@ const App: React.FC = () => {
               >
                 <i className="fa-solid fa-trash-can"></i>
               </button>
-<button onClick={outdentTask} disabled={!selectedTaskIds} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Outdent">
+              <button onClick={outdentTask} disabled={!selectedTaskIds} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Outdent">
                 <i className="fa-solid fa-outdent"></i>
               </button>
               <button onClick={indentTask} disabled={!selectedTaskIds} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition-colors" title="Indent">
@@ -972,7 +973,6 @@ const App: React.FC = () => {
                 {isGenerating ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-wand-magic-sparkles text-xs"></i>}
               </button>
             </div>
-            
 
            <button
            onClick={() => setIsShareModalOpen(true)}
@@ -1028,13 +1028,13 @@ const App: React.FC = () => {
                     const hasConflict = conflictedTaskIds.has(task.id);
                     const isOverdue = overdueTaskIds.has(task.id);
                     const isSelected = selectedTaskIds.includes(task.id);
-                    const isBeingDragged = draggedRowIndex === originalIndex;
+                    const isBeingDragged = draggedTaskId === task.id;
                     
                     return (
                       <div 
                         key={task.id} 
                         draggable={true}
-                        onDragStart={(e) => handleTaskDragStart(e, originalIndex)}
+                        onDragStart={(e) => handleTaskDragStart(e, task, originalIndex)}
                         onDragOver={(e) => handleTaskDragOver(e, originalIndex)}
                         onDragEnd={handleTaskDragEnd}
                         onClick={(e) => handleSelectTask(e, task.id, originalIndex)} 
@@ -1190,7 +1190,7 @@ const App: React.FC = () => {
             )}
             <div className="w-[1px] h-3 bg-gray-200"></div>
             <span className="flex items-center gap-1.5"><i className="fa-solid fa-business-time"></i> WORK DAYS: M-F</span>
-{lastSaved && <span className="text-gray-500 ml-4">Last saved: {lastSaved.toLocaleTimeString()}</span>}
+            {lastSaved && <span className="text-gray-500 ml-4">Last saved: {lastSaved.toLocaleTimeString()}</span>}
           </div>
           <div className="flex gap-4">
             <span className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-blue-500 shadow-sm"></div> PLANNED</span>
@@ -1198,16 +1198,16 @@ const App: React.FC = () => {
             <span className="flex items-center gap-1.5 ml-2"><div className="w-4 h-2.5 rounded-sm bg-slate-900 shadow-sm"></div> SUMMARY</span>
           </div>
 
-{activeProject && (
-<ShareModal
-isOpen={isShareModalOpen}
-onClose={() => setIsShareModalOpen(false)}
-projectId={activeProject.id}
-projectName={activeProject.name}
-members={activeProject.members ||[]}
-isOwner={true}
-/>
-)}
+          {activeProject && (
+            <ShareModal
+              isOpen={isShareModalOpen}
+              onClose={() => setIsShareModalOpen(false)}
+              projectId={activeProject.id}
+              projectName={activeProject.name}
+              members={activeProject.members || []}
+              isOwner={true}
+            />
+          )}
         </footer>
         <div className="sidebar-container">
           <Sidebar 
