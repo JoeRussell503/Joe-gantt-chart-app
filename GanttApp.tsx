@@ -1,4 +1,4 @@
-—import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db, auth } from './config/firebase';
 import { doc, setDoc, onSnapshot, collection, query, where, getDoc } from 'firebase/firestore';
 import { Task, Project } from './types';
