@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+—import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { db, auth } from './config/firebase';
+import { doc, setDoc, onSnapshot, collection, query, where, getDoc } from 'firebase/firestore';
 import { Task, Project } from './types';
 import { addDays, getDiffDays, getTimelineRange, isWeekend, isWorkDay, parseUTCDate, toUTCDateString } from './utils/dateUtils';
 import { generateTasksFromPrompt, parseFileWithGemini } from './services/geminiService';
@@ -69,6 +71,8 @@ const App: React.FC = () => {
   // FIX: Store both the row index (for visual opacity) and the stable task ID
   const [draggedRowIndex, setDraggedRowIndex] = useState<number | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeProject = useMemo(() => 
     projects.find(p => p.id === activeProjectId) || projects[0], 
@@ -76,15 +80,56 @@ const App: React.FC = () => {
 
   const tasks = activeProject?.tasks || [];
 
+  // Track current Firebase user
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((user: any) => setCurrentUser(user));
+    return unsub;
+  }, []);
+
+  // Save to localStorage immediately (instant) + Firestore with debounce
   useEffect(() => {
     if (projects.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        projects,
-        activeProjectId
-      }));
+      // Always save locally for instant persistence
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ projects, activeProjectId }));
       setLastSaved(new Date());
+
+      // Debounce Firestore save to avoid hammering on every keystroke
+      if (currentUser) {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(async () => {
+          try {
+            await setDoc(doc(db, 'workspaces', currentUser.uid), {
+              projects,
+              activeProjectId,
+              updatedAt: new Date().toISOString(),
+              ownerEmail: currentUser.email,
+            });
+            setLastSaved(new Date());
+          } catch (err) {
+            console.error('Firestore save error:', err);
+          }
+        }, 1500);
+      }
     }
-  }, [projects, activeProjectId]);
+  }, [projects, activeProjectId, currentUser]);
+
+  // Load from Firestore on sign-in (overrides localStorage if cloud data is newer)
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = onSnapshot(doc(db, 'workspaces', currentUser.uid), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        // Only update if the change came from another device/user
+        const localRaw = localStorage.getItem(STORAGE_KEY);
+        const local = localRaw ? JSON.parse(localRaw) : null;
+        if (!local || data.updatedAt > (local.updatedAt || '')) {
+          setProjects(data.projects || []);
+          setActiveProjectId(data.activeProjectId || null);
+        }
+      }
+    });
+    return unsub;
+  }, [currentUser]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
