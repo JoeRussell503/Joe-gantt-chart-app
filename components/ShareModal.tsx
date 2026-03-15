@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { db, auth } from '../config/firebase';
-import { doc, setDoc, collection } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -12,23 +13,32 @@ interface ShareModalProps {
 }
 
 const ShareModal: React.FC<ShareModalProps> = ({
-  isOpen, onClose, projectId, projectName, members, isOwner
+  isOpen, onClose, projectId, projectName
 }) => {
   const [role, setRole] = useState<'editor' | 'viewer'>('editor');
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
 
-  if (!isOpen) return null;
+  // Reset when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setInviteLink('');
+      setCopied(false);
+    }
+  }, [isOpen]);
 
-  const generateInviteLink = async () => {
+  const generateAndCopy = async () => {
     if (!auth.currentUser) return;
+    if (inviteLink) {
+      await navigator.clipboard.writeText(inviteLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+      return;
+    }
     setGenerating(true);
     try {
-      // Create a unique invite code
       const inviteId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      
-      // Save the invite to Firestore
       await setDoc(doc(db, 'invites', inviteId), {
         projectId,
         projectName,
@@ -36,49 +46,29 @@ const ShareModal: React.FC<ShareModalProps> = ({
         fromUid: auth.currentUser.uid,
         fromEmail: auth.currentUser.email,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         used: false,
       });
-
-      const link = `${window.location.origin}/invite/${inviteId}`;
+      const link = window.location.origin + '/invite/' + inviteId;
       setInviteLink(link);
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
     } catch (err) {
-      console.error('Error generating invite:', err);
+      console.error('Invite error:', err);
     } finally {
       setGenerating(false);
     }
   };
 
-  const copyLink = async () => {
-    if (!inviteLink) return;
-    await navigator.clipboard.writeText(inviteLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
-  };
+  const modalContent = (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      style={{ backgroundColor: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white p-8 rounded-3xl shadow-2xl w-[480px] max-w-[90vw]">
 
-  const handleGenerateAndCopy = async () => {
-    if (inviteLink) {
-      copyLink();
-    } else {
-      await generateInviteLink();
-    }
-  };
-
-  // Auto-copy once link is generated
-  React.useEffect(() => {
-    if (inviteLink) {
-      navigator.clipboard.writeText(inviteLink).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2500);
-      });
-    }
-  }, [inviteLink]);
-
-  return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center animate-in fade-in duration-200">
-      <div className="bg-white p-8 rounded-3xl shadow-2xl w-[480px] max-w-[90vw] animate-in zoom-in-95 duration-200">
-        
-        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-xl font-black text-slate-900">Share Project</h2>
@@ -89,36 +79,24 @@ const ShareModal: React.FC<ShareModalProps> = ({
           </button>
         </div>
 
-        {/* Permission selector */}
         <div className="mb-6">
-          <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
-            Invite with permission
-          </label>
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Permission level</label>
           <div className="flex gap-3">
             <button
               onClick={() => { setRole('editor'); setInviteLink(''); }}
-              className={`flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ${
-                role === 'editor'
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 text-slate-500 hover:border-slate-300'
-              }`}
+              className={`flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ${role === 'editor' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
             >
               <i className="fa-solid fa-pen-to-square mr-2"></i>Can Edit
             </button>
             <button
               onClick={() => { setRole('viewer'); setInviteLink(''); }}
-              className={`flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ${
-                role === 'viewer'
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 text-slate-500 hover:border-slate-300'
-              }`}
+              className={`flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ${role === 'viewer' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
             >
               <i className="fa-solid fa-eye mr-2"></i>Can View
             </button>
           </div>
         </div>
 
-        {/* Invite link section */}
         <div className="bg-slate-50 rounded-2xl p-4 mb-6">
           <div className="flex items-center gap-2 mb-3">
             <i className="fa-solid fa-link text-blue-600 text-sm"></i>
@@ -128,77 +106,64 @@ const ShareModal: React.FC<ShareModalProps> = ({
             </span>
           </div>
 
-          {inviteLink ? (
-            <div className="flex items-center gap-2">
+          {inviteLink && (
+            <div className="flex items-center gap-2 mb-3">
               <input
                 type="text"
                 value={inviteLink}
                 readOnly
                 className="flex-1 text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-600 font-mono truncate"
               />
-              <button
-                onClick={copyLink}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                  copied
-                    ? 'bg-green-500 text-white'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-              >
-                {copied ? <><i className="fa-solid fa-check mr-1"></i>Copied!</> : <><i className="fa-solid fa-copy mr-1"></i>Copy</>}
-              </button>
             </div>
-          ) : (
-            <p className="text-xs text-slate-400 mb-3">
-              Generate a link and share it with your teammate. Anyone with the link can join as <strong>{role === 'editor' ? 'an editor' : 'a viewer'}</strong>.
-            </p>
           )}
 
-          {!inviteLink && (
-            <button
-              onClick={handleGenerateAndCopy}
-              disabled={generating}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-sm font-black transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {generating ? (
-                <><i className="fa-solid fa-spinner fa-spin"></i> Generating...</>
-              ) : (
-                <><i className="fa-solid fa-link"></i> Generate &amp; Copy Invite Link</>
-              )}
-            </button>
-          )}
+          <button
+            onClick={generateAndCopy}
+            disabled={generating}
+            className={`w-full py-3 rounded-2xl text-sm font-black transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 ${copied ? 'bg-green-500 text-white shadow-green-500/20' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20'}`}
+          >
+            {generating ? (
+              <><i className="fa-solid fa-spinner fa-spin"></i> Generating...</>
+            ) : copied ? (
+              <><i className="fa-solid fa-check"></i> Copied to clipboard!</>
+            ) : inviteLink ? (
+              <><i className="fa-solid fa-copy"></i> Copy Link Again</>
+            ) : (
+              <><i className="fa-solid fa-link"></i> Generate &amp; Copy Invite Link</>
+            )}
+          </button>
 
           {inviteLink && (
             <button
               onClick={() => { setInviteLink(''); setCopied(false); }}
-              className="w-full mt-2 py-2 text-xs text-slate-400 hover:text-slate-600 transition-colors font-medium"
+              className="w-full mt-2 py-1.5 text-xs text-slate-400 hover:text-slate-600 transition-colors"
             >
-              Generate new link
+              Generate new link with different permission
             </button>
           )}
         </div>
 
-        {/* How it works */}
-        <div className="border-t border-slate-100 pt-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">How it works</p>
-          <div className="space-y-2">
-            {[
-              { icon: 'fa-copy', text: 'Copy and send the link to your teammate' },
-              { icon: 'fa-user-plus', text: 'They sign up or sign in at ganttbyjoe.netlify.app' },
-              { icon: 'fa-check-circle', text: 'They click the link — project is added to their workspace' },
-            ].map((step, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs text-slate-500">
-                <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
-                  <i className={`fa-solid ${step.icon} text-[10px]`}></i>
-                </div>
-                {step.text}
+        <div className="border-t border-slate-100 pt-4 space-y-2">
+          {[
+            { icon: 'fa-copy', text: 'Copy and send the link to your teammate' },
+            { icon: 'fa-user-plus', text: 'They sign up at ganttbyjoe.netlify.app' },
+            { icon: 'fa-check-circle', text: 'They open the link — project added instantly' },
+          ].map((s, i) => (
+            <div key={i} className="flex items-center gap-3 text-xs text-slate-500">
+              <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                <i className={`fa-solid ${s.icon} text-[10px]`}></i>
               </div>
-            ))}
-          </div>
+              {s.text}
+            </div>
+          ))}
         </div>
 
       </div>
     </div>
   );
+
+  // Use a portal to render outside the footer DOM — prevents React tree issues
+  return isOpen ? ReactDOM.createPortal(modalContent, document.body) : null;
 };
 
 export default ShareModal;
