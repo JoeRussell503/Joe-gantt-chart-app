@@ -1,0 +1,5 @@
+# Firebase auth handler - must exist for Google sign-in redirect to work
+/__/auth/handler  https://gantt-chart-app-2026.firebaseapp.com/__/auth/handler  200
+
+# SPA fallback - all routes serve index.html
+/*  /index.html  200
