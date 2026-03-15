@@ -2,28 +2,25 @@ import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
 import { auth } from './config/firebase';
 import SignInScreen from './components/SignInScreen';
-import GanttApp from './GanttApp'; // The existing App.tsx will be renamed to GanttApp.tsx
+import InviteAccept from './components/InviteAccept';
+import GanttApp from './GanttApp';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Check if this is an invite link: /invite/:code
+  const path = window.location.pathname;
+  const inviteMatch = path.match(/^\/invite\/([a-z0-9]+)$/i);
+  const inviteCode = inviteMatch ? inviteMatch[1] : null;
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error('Sign out error:', error);
-    }
-  };
 
   if (loading) {
     return (
@@ -33,6 +30,20 @@ const App: React.FC = () => {
           <p className="text-gray-600">Loading...</p>
         </div>
       </div>
+    );
+  }
+
+  // Invite route — show even if not signed in (InviteAccept handles auth check)
+  if (inviteCode) {
+    if (!user) {
+      // Not signed in — send to sign in, then come back
+      return <SignInScreen />;
+    }
+    return (
+      <InviteAccept
+        inviteCode={inviteCode}
+        onAccepted={() => { window.location.href = '/'; }}
+      />
     );
   }
 
