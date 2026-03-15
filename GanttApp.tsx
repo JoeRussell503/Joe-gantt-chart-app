@@ -1256,16 +1256,6 @@ const App: React.FC = () => {
             <span className="flex items-center gap-1.5 ml-2"><div className="w-4 h-2.5 rounded-sm bg-slate-900 shadow-sm"></div> SUMMARY</span>
           </div>
 
-          {activeProject && (
-            <ShareModal
-              isOpen={isShareModalOpen}
-              onClose={() => setIsShareModalOpen(false)}
-              projectId={activeProject.id}
-              projectName={activeProject.name}
-              members={activeProject.members || []}
-              isOwner={true}
-            />
-          )}
         </footer>
         <div className="sidebar-container">
           <Sidebar 
@@ -1280,6 +1270,18 @@ const App: React.FC = () => {
         </div>
       </div>
     </div>
+  
+
+    {activeProject && isShareModalOpen && (
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        projectId={activeProject.id}
+        projectName={activeProject.name}
+        members={activeProject.members || []}
+        isOwner={true}
+      />
+    )}
   );
 };
 
