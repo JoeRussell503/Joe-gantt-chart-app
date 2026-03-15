@@ -21,7 +21,7 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
       const inviteDoc = await getDoc(doc(db, 'invites', inviteCode));
       if (!inviteDoc.exists()) {
         setStatus('error');
-        setErrorMsg('This invite link is invalid or has expired.');
+        setErrorMsg('This invite link is invalid or has already been used.');
         return;
       }
       const data = inviteDoc.data();
@@ -35,9 +35,9 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
       }
       setInvite(data);
       setStatus('ready');
-    } catch (err) {
+    } catch (err: any) {
       setStatus('error');
-      setErrorMsg('Could not load invite. Please try again.');
+      setErrorMsg('Could not load invite: ' + (err?.message || 'Please try again.'));
     }
   };
 
@@ -47,15 +47,17 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
     try {
       const user = auth.currentUser;
 
-      // Get the owner's workspace to find the project
-      const ownerWorkspace = await getDoc(doc(db, 'workspaces', invite.fromUid));
-      if (!ownerWorkspace.exists()) throw new Error('Project not found');
+      // Use the project snapshot embedded in the invite — no cross-user reads needed
+      const project = invite.projectSnapshot;
+      if (!project) throw new Error('No project data in invite. Please ask the owner to generate a new link.');
 
-      const ownerData = ownerWorkspace.data();
-      const project = ownerData.projects?.find((p: any) => p.id === invite.projectId);
-      if (!project) throw new Error('Project not found in workspace');
+      const projectWithMeta = {
+        ...project,
+        _sharedFrom: invite.fromUid,
+        _sharedFromEmail: invite.fromEmail,
+        _role: invite.role,
+      };
 
-      // Add project to this user's workspace
       const myWorkspaceRef = doc(db, 'workspaces', user.uid);
       const myWorkspace = await getDoc(myWorkspaceRef);
 
@@ -63,16 +65,14 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
         const myData = myWorkspace.data();
         const alreadyHas = myData.projects?.some((p: any) => p.id === invite.projectId);
         if (!alreadyHas) {
-          // Add project with role metadata
-          const projectWithRole = { ...project, _sharedFrom: invite.fromUid, _role: invite.role };
           await updateDoc(myWorkspaceRef, {
-            projects: arrayUnion(projectWithRole),
+            projects: arrayUnion(projectWithMeta),
+            updatedAt: new Date().toISOString(),
           });
         }
       } else {
-        // Create workspace with this project
         await setDoc(myWorkspaceRef, {
-          projects: [{ ...project, _sharedFrom: invite.fromUid, _role: invite.role }],
+          projects: [projectWithMeta],
           activeProjectId: invite.projectId,
           ownerEmail: user.email,
           updatedAt: new Date().toISOString(),
@@ -80,7 +80,11 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
       }
 
       // Mark invite as used
-      await updateDoc(doc(db, 'invites', inviteCode), { used: true, usedBy: user.email, usedAt: new Date().toISOString() });
+      await updateDoc(doc(db, 'invites', inviteCode), {
+        used: true,
+        usedBy: user.email,
+        usedAt: new Date().toISOString(),
+      });
 
       setStatus('done');
       setTimeout(() => onAccepted(), 1500);
@@ -93,14 +97,14 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 text-center">
-        
+
         <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-6 mx-auto shadow-lg shadow-blue-600/20">
           <i className="fa-solid fa-chart-gantt text-white text-2xl"></i>
         </div>
 
         {status === 'loading' && (
           <>
-            <i className="fa-solid fa-spinner fa-spin text-3xl text-blue-600 mb-4"></i>
+            <i className="fa-solid fa-spinner fa-spin text-3xl text-blue-600 mb-4 block"></i>
             <p className="text-slate-500">Loading invite...</p>
           </>
         )}
@@ -124,13 +128,13 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
             {auth.currentUser ? (
               <button
                 onClick={acceptInvite}
-                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-sm transition-all shadow-lg shadow-blue-600/20 active:scale-[0.98]"
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-sm transition-all shadow-lg shadow-blue-600/20"
               >
-                Accept & Open Project
+                Accept &amp; Open Project
               </button>
             ) : (
               <div>
-                <p className="text-sm text-slate-500 mb-4">Sign in or create an account to accept this invite.</p>
+                <p className="text-sm text-slate-500 mb-4">Sign in or create an account first, then click your invite link again.</p>
                 <a
                   href="/"
                   className="w-full inline-block py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-sm transition-all shadow-lg shadow-blue-600/20"
@@ -144,7 +148,7 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
 
         {status === 'accepting' && (
           <>
-            <i className="fa-solid fa-spinner fa-spin text-3xl text-blue-600 mb-4"></i>
+            <i className="fa-solid fa-spinner fa-spin text-3xl text-blue-600 mb-4 block"></i>
             <p className="text-slate-500">Adding project to your workspace...</p>
           </>
         )}
@@ -155,7 +159,7 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
               <i className="fa-solid fa-check text-2xl"></i>
             </div>
             <h2 className="text-xl font-black text-slate-900 mb-2">You're in!</h2>
-            <p className="text-slate-500">Opening your project...</p>
+            <p className="text-slate-500">Opening your project now...</p>
           </>
         )}
 
@@ -165,7 +169,7 @@ const InviteAccept: React.FC<InviteAcceptProps> = ({ inviteCode, onAccepted }) =
               <i className="fa-solid fa-clock text-2xl"></i>
             </div>
             <h2 className="text-xl font-black text-slate-900 mb-2">Invite Expired</h2>
-            <p className="text-slate-500">This invite link has already been used or has expired. Ask the project owner to send a new one.</p>
+            <p className="text-slate-500">This link has already been used or expired. Ask the project owner to send a new one.</p>
           </>
         )}
 
