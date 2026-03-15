@@ -1,299 +1,201 @@
 import React, { useState } from 'react';
-import { shareProject, removeMember } from '../services/firebaseService';
+import { db, auth } from '../config/firebase';
+import { doc, setDoc, collection } from 'firebase/firestore';
 
 interface ShareModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
   projectName: string;
-  members: Array<{ email: string; role: string; displayName: string }>;
+  members: any[];
   isOwner: boolean;
 }
 
-const ShareModal: React.FC<ShareModalProps> = ({ 
-  isOpen, 
-  onClose, 
-  projectId, 
-  projectName,
-  members,
-  isOwner 
+const ShareModal: React.FC<ShareModalProps> = ({
+  isOpen, onClose, projectId, projectName, members, isOwner
 }) => {
-  const [email, setEmail] = useState('');
   const [role, setRole] = useState<'editor' | 'viewer'>('editor');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
 
   if (!isOpen) return null;
 
-  // Generate shareable link
-  const shareableLink = `${window.location.origin}?project=${projectId}`;
-
-  const handleShare = async () => {
-    if (!email.trim()) {
-      setError('Please enter an email address');
-      return;
-    }
-
-    if (!email.includes('@')) {
-      setError('Please enter a valid email address');
-      return;
-    }
-
+  const generateInviteLink = async () => {
+    if (!auth.currentUser) return;
+    setGenerating(true);
     try {
-      setLoading(true);
-      setError('');
-      setSuccess('');
+      // Create a unique invite code
+      const inviteId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       
-      await shareProject(projectId, email.trim().toLowerCase(), role);
-      
-      setSuccess(`Invited ${email} as ${role}`);
-      setEmail('');
-      
-      setTimeout(() => {
-        setSuccess('');
-      }, 3000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to share project');
-    } finally {
-      setLoading(false);
-    }
-  };
+      // Save the invite to Firestore
+      await setDoc(doc(db, 'invites', inviteId), {
+        projectId,
+        projectName,
+        role,
+        fromUid: auth.currentUser.uid,
+        fromEmail: auth.currentUser.email,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+        used: false,
+      });
 
-  const handleRemove = async (memberEmail: string) => {
-    if (!confirm(`Remove ${memberEmail} from this project?`)) return;
-
-    try {
-      await removeMember(projectId, memberEmail);
-    } catch (err: any) {
-      setError(err.message || 'Failed to remove member');
-    }
-  };
-
-  const copyLinkToClipboard = async () => {
-    try {
-      await navigator.clipboard.writeText(shareableLink);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
+      const link = `${window.location.origin}/invite/${inviteId}`;
+      setInviteLink(link);
     } catch (err) {
-      setError('Failed to copy link');
+      console.error('Error generating invite:', err);
+    } finally {
+      setGenerating(false);
     }
   };
+
+  const copyLink = async () => {
+    if (!inviteLink) return;
+    await navigator.clipboard.writeText(inviteLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleGenerateAndCopy = async () => {
+    if (inviteLink) {
+      copyLink();
+    } else {
+      await generateInviteLink();
+    }
+  };
+
+  // Auto-copy once link is generated
+  React.useEffect(() => {
+    if (inviteLink) {
+      navigator.clipboard.writeText(inviteLink).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      });
+    }
+  }, [inviteLink]);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center animate-in fade-in duration-200">
+      <div className="bg-white p-8 rounded-3xl shadow-2xl w-[480px] max-w-[90vw] animate-in zoom-in-95 duration-200">
+        
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Share "{projectName}"</h2>
-            <p className="text-sm text-gray-500 mt-1">Invite people to collaborate</p>
+            <h2 className="text-xl font-black text-slate-900">Share Project</h2>
+            <p className="text-sm text-slate-500 mt-0.5 truncate max-w-[300px]">{projectName}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <i className="fa-solid fa-times text-xl"></i>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 transition-colors">
+            <i className="fa-solid fa-xmark"></i>
           </button>
         </div>
 
-        {/* Shareable Link Section */}
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="flex items-start justify-between mb-3">
-            <div>
-              <h3 className="text-sm font-semibold text-blue-900 flex items-center gap-2">
-                <i className="fa-solid fa-link"></i>
-                Get shareable link
-              </h3>
-              <p className="text-xs text-blue-700 mt-1">
-                Anyone with this link can view this project
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex gap-2 mt-3">
-            <input
-              type="text"
-              value={shareableLink}
-              readOnly
-              className="flex-1 px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        {/* Permission selector */}
+        <div className="mb-6">
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+            Invite with permission
+          </label>
+          <div className="flex gap-3">
             <button
-              onClick={copyLinkToClipboard}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
+              onClick={() => { setRole('editor'); setInviteLink(''); }}
+              className={`flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ${
+                role === 'editor'
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 text-slate-500 hover:border-slate-300'
+              }`}
             >
-              {linkCopied ? (
-                <>
-                  <i className="fa-solid fa-check"></i>
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <i className="fa-solid fa-copy"></i>
-                  Copy link
-                </>
-              )}
+              <i className="fa-solid fa-pen-to-square mr-2"></i>Can Edit
             </button>
-          </div>
-
-          <div className="mt-3 p-2 bg-blue-100 rounded text-xs text-blue-800">
-            <i className="fa-solid fa-info-circle mr-1"></i>
-            <strong>Note:</strong> People with the link will need to sign in to access the project
+            <button
+              onClick={() => { setRole('viewer'); setInviteLink(''); }}
+              className={`flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ${
+                role === 'viewer'
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 text-slate-500 hover:border-slate-300'
+              }`}
+            >
+              <i className="fa-solid fa-eye mr-2"></i>Can View
+            </button>
           </div>
         </div>
 
-        {/* Email Invite Section */}
-        {isOwner && (
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <i className="fa-solid fa-envelope"></i>
-              Invite by email
-            </label>
-            <div className="flex gap-2">
+        {/* Invite link section */}
+        <div className="bg-slate-50 rounded-2xl p-4 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <i className="fa-solid fa-link text-blue-600 text-sm"></i>
+            <span className="text-sm font-bold text-slate-700">Invite Link</span>
+            <span className="ml-auto text-xs text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
+              {role === 'editor' ? 'Can Edit' : 'Can View'} · 7 days
+            </span>
+          </div>
+
+          {inviteLink ? (
+            <div className="flex items-center gap-2">
               <input
-                type="email"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setError('');
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handleShare()}
-                placeholder="colleague@example.com"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                disabled={loading}
+                type="text"
+                value={inviteLink}
+                readOnly
+                className="flex-1 text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-600 font-mono truncate"
               />
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as 'editor' | 'viewer')}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
-                disabled={loading}
-              >
-                <option value="editor">Can edit</option>
-                <option value="viewer">Can view</option>
-              </select>
               <button
-                onClick={handleShare}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                onClick={copyLink}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                  copied
+                    ? 'bg-green-500 text-white'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
               >
-                {loading ? (
-                  <i className="fa-solid fa-spinner fa-spin"></i>
-                ) : (
-                  <>
-                    <i className="fa-solid fa-user-plus"></i>
-                    Invite
-                  </>
-                )}
+                {copied ? <><i className="fa-solid fa-check mr-1"></i>Copied!</> : <><i className="fa-solid fa-copy mr-1"></i>Copy</>}
               </button>
             </div>
+          ) : (
+            <p className="text-xs text-slate-400 mb-3">
+              Generate a link and share it with your teammate. Anyone with the link can join as <strong>{role === 'editor' ? 'an editor' : 'a viewer'}</strong>.
+            </p>
+          )}
 
-            {error && (
-              <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700 flex items-center gap-2">
-                <i className="fa-solid fa-exclamation-circle"></i>
-                {error}
-              </div>
-            )}
-            {success && (
-              <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-sm text-green-700 flex items-center gap-2">
-                <i className="fa-solid fa-check-circle"></i>
-                {success}
-              </div>
-            )}
+          {!inviteLink && (
+            <button
+              onClick={handleGenerateAndCopy}
+              disabled={generating}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-sm font-black transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {generating ? (
+                <><i className="fa-solid fa-spinner fa-spin"></i> Generating...</>
+              ) : (
+                <><i className="fa-solid fa-link"></i> Generate &amp; Copy Invite Link</>
+              )}
+            </button>
+          )}
 
-            <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-              <div className="text-xs text-gray-700 space-y-1">
-                <div className="flex items-start gap-2">
-                  <i className="fa-solid fa-pencil text-blue-600 mt-0.5"></i>
-                  <div>
-                    <strong>Can edit:</strong> Add, modify, and delete tasks
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <i className="fa-solid fa-eye text-gray-600 mt-0.5"></i>
-                  <div>
-                    <strong>Can view:</strong> Read-only access to view tasks
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+          {inviteLink && (
+            <button
+              onClick={() => { setInviteLink(''); setCopied(false); }}
+              className="w-full mt-2 py-2 text-xs text-slate-400 hover:text-slate-600 transition-colors font-medium"
+            >
+              Generate new link
+            </button>
+          )}
+        </div>
 
-        {/* Members List */}
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <i className="fa-solid fa-users"></i>
-            People with access ({members.length})
-          </h3>
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {Object.values(members).map((member: any) => (
-              <div
-                key={member.email}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-gray-200"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-sm">
-                    <span className="text-white text-sm font-bold">
-                      {member.displayName?.[0]?.toUpperCase() || member.email[0].toUpperCase()}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">
-                      {member.displayName || member.email.split('@')[0]}
-                    </p>
-                    <p className="text-xs text-gray-500">{member.email}</p>
-                  </div>
+        {/* How it works */}
+        <div className="border-t border-slate-100 pt-4">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">How it works</p>
+          <div className="space-y-2">
+            {[
+              { icon: 'fa-copy', text: 'Copy and send the link to your teammate' },
+              { icon: 'fa-user-plus', text: 'They sign up or sign in at ganttbyjoe.netlify.app' },
+              { icon: 'fa-check-circle', text: 'They click the link — project is added to their workspace' },
+            ].map((step, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs text-slate-500">
+                <div className="w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                  <i className={`fa-solid ${step.icon} text-[10px]`}></i>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-3 py-1 rounded-full font-medium ${
-                    member.role === 'owner'
-                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                      : member.role === 'editor'
-                      ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                      : 'bg-gray-100 text-gray-700 border border-gray-200'
-                  }`}>
-                    {member.role === 'owner' ? (
-                      <>
-                        <i className="fa-solid fa-crown mr-1"></i>
-                        Owner
-                      </>
-                    ) : member.role === 'editor' ? (
-                      <>
-                        <i className="fa-solid fa-pencil mr-1"></i>
-                        Can edit
-                      </>
-                    ) : (
-                      <>
-                        <i className="fa-solid fa-eye mr-1"></i>
-                        Can view
-                      </>
-                    )}
-                  </span>
-                  {isOwner && member.role !== 'owner' && (
-                    <button
-                      onClick={() => handleRemove(member.email)}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded transition-colors"
-                      title="Remove access"
-                    >
-                      <i className="fa-solid fa-user-minus"></i>
-                    </button>
-                  )}
-                </div>
+                {step.text}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-          >
-            Done
-          </button>
-        </div>
       </div>
     </div>
   );
