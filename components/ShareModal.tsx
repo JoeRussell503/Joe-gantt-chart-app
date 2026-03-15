@@ -10,17 +10,17 @@ interface ShareModalProps {
   projectName: string;
   members: any[];
   isOwner: boolean;
+  project?: any;
 }
 
 const ShareModal: React.FC<ShareModalProps> = ({
-  isOpen, onClose, projectId, projectName
+  isOpen, onClose, projectId, projectName, project
 }) => {
   const [role, setRole] = useState<'editor' | 'viewer'>('editor');
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
 
-  // Reset when modal closes
   useEffect(() => {
     if (!isOpen) {
       setInviteLink('');
@@ -39,9 +39,12 @@ const ShareModal: React.FC<ShareModalProps> = ({
     setGenerating(true);
     try {
       const inviteId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      
+      // Embed the full project snapshot so the invitee doesn't need to read owner's workspace
       await setDoc(doc(db, 'invites', inviteId), {
         projectId,
         projectName,
+        projectSnapshot: project || null,
         role,
         fromUid: auth.currentUser.uid,
         fromEmail: auth.currentUser.email,
@@ -49,6 +52,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         used: false,
       });
+
       const link = window.location.origin + '/invite/' + inviteId;
       setInviteLink(link);
       await navigator.clipboard.writeText(link);
@@ -162,7 +166,6 @@ const ShareModal: React.FC<ShareModalProps> = ({
     </div>
   );
 
-  // Use a portal to render outside the footer DOM — prevents React tree issues
   return isOpen ? ReactDOM.createPortal(modalContent, document.body) : null;
 };
 
