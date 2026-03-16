@@ -1264,6 +1264,7 @@ const App: React.FC = () => {
               projectName={activeProject.name}
               members={activeProject.members || []}
               isOwner={true}
+              project={activeProject}
             />
           )}
         </footer>
