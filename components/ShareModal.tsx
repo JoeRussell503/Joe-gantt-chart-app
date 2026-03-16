@@ -44,7 +44,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
       await setDoc(doc(db, 'invites', inviteId), {
         projectId,
         projectName,
-        projectSnapshot: project || null,
+        projectSnapshot: project ? JSON.parse(JSON.stringify(project)) : null,
         role,
         fromUid: auth.currentUser.uid,
         fromEmail: auth.currentUser.email,
